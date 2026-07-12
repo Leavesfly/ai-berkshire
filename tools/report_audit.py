@@ -27,40 +27,18 @@ import math
 import os
 import re
 import sys
-from decimal import Decimal, Context, ROUND_HALF_EVEN
 from random import Random
 
-_CTX = Context(prec=28, rounding=ROUND_HALF_EVEN)
+# 终端 ANSI 颜色（用于判决结果高亮显示）
+BOLD = '\033[1m'
+RED = '\033[91m'
+GREEN = '\033[92m'
+YELLOW = '\033[93m'
+RESET = '\033[0m'
 
 # ---------------------------------------------------------------------------
 # 数据点提取：从 Markdown 报告中识别财务数字
 # ---------------------------------------------------------------------------
-
-# 匹配模式：数字 + 单位，前面有上下文标签
-# 例：收入：1,239亿元、PE 18.8x、毛利率 56%、市值 ~$5,670亿
-_PATTERNS = [
-    # 百分比
-    (r'([\d,，\.]+)\s*%',                        '%',    'percent'),
-    # 亿元/亿美元/亿港元
-    (r'([\d,，\.]+)\s*亿(元|美元|港元|RMB|USD|HKD)?', '亿',    'hundred_million'),
-    # 倍数 PE/PB/PS
-    (r'([\d,，\.]+)\s*[xX倍]',                   'x',    'multiple'),
-    # 万亿
-    (r'([\d,，\.]+)\s*万亿',                      '万亿', 'trillion'),
-    # 美元绝对值（B/T）
-    (r'\$\s*([\d,，\.]+)\s*([BMT亿])',             '$',    'usd_abs'),
-    # 纯整数（如市值、收入、用户数等，出现在表格 | 里）
-    (r'\|\s*[~约]?\$?([\d,，\.]+)\s*\|',          '',     'table_num'),
-]
-
-_LABEL_RE = re.compile(
-    r'(?P<label>[^\|\n：:]{2,25})[：:\s]+[~约]?\$?(?P<num>[\d,，\.]+)\s*(?P<unit>亿[元美港]?元?|万亿|[xX倍]|%|[BMT])?'
-)
-
-_TABLE_ROW_RE = re.compile(
-    r'\|\s*(?P<label>[^|]{1,40})\s*\|\s*[~约]?\$?(?P<num>[\d,，\.]+)\s*(?P<unit>亿[元美港]?元?|万亿|[xX倍]|%|[BMT])?\s*\|'
-)
-
 
 def _clean_num(s: str) -> float:
     """把带逗号、中文逗号的数字字符串转为 float。"""
@@ -96,12 +74,6 @@ def _is_valid_label(label: str) -> bool:
         return False
     return True
 
-
-# 两列表格行：| 标签 | 数值 unit |（专为财务报告的 KV 表设计）
-_KV_TABLE_RE = re.compile(
-    r'^\|\s*(?P<label>[^|*\n]{2,40}?)\s*\|\s*[~约]?\$?(?P<num>[\d,，\.]+)\s*'
-    r'(?P<unit>亿[元美港]?元?|万亿|[xX倍]|%|[BMT亿])?\s*[\|（\(]'
-)
 
 # 带标签的 KV 行：标签：数值 单位
 _KV_LABEL_RE = re.compile(
@@ -268,12 +240,6 @@ def render_verdict(results: list, report_name: str = "") -> dict:
         'summary': str,
       }
     """
-    BOLD = '\033[1m'
-    RED = '\033[91m'
-    GREEN = '\033[92m'
-    YELLOW = '\033[93m'
-    RESET = '\033[0m'
-
     print('=' * 70)
     print(f'{BOLD}报告数据抽检 — 准出/打回判决{RESET}')
     if report_name:
@@ -399,7 +365,7 @@ def render_verdict(results: list, report_name: str = "") -> dict:
 
 
 # ---------------------------------------------------------------------------
-# CLI Entry Point
+# 命令行入口
 # ---------------------------------------------------------------------------
 
 def main():

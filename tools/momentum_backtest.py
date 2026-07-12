@@ -7,8 +7,7 @@
 """
 
 import json
-import sys
-from datetime import datetime, timedelta
+from datetime import datetime
 from urllib.request import urlopen, Request
 from collections import OrderedDict
 
@@ -110,7 +109,7 @@ FUNDAMENTALS = {
 # ============================================================
 
 def compute_momentum_signals(prices):
-    """计算动量信号"""
+    """扫描全时间序列，逐日判断是否触发动量信号（60日新高 + 放量确认）。"""
     signals = []
     for i in range(60, len(prices)):
         row = prices[i]
@@ -162,7 +161,7 @@ def find_latest_fundamental(ticker, signal_date):
 
 
 def verify_value(ticker, fund_data, prev_fund_data=None):
-    """5维价值验证"""
+    """5 维价值验证：营收加速/毛利率方向/盈利惊喜/营收高增长/毛利率健康，返回得分。"""
     if not fund_data:
         return {"score": 0, "details": "无基本面数据"}
 
@@ -278,16 +277,6 @@ def backtest_ticker(ticker):
     print(f"  动量发现 + 价值验证结果：")
     print(f"  {'—'*60}")
 
-    all_signals_with_action = []
-    for sig in momentum_signals:
-        month_key = sig["date"][:7]
-        found = False
-        for bs in buy_signals:
-            if bs["date"][:7] == month_key:
-                all_signals_with_action.append(bs)
-                found = True
-                break
-
     # 只展示关键时间窗口的信号
     first_buy = None
     for bs in buy_signals:
@@ -307,10 +296,8 @@ def backtest_ticker(ticker):
     if first_buy and prices:
         buy_price = first_buy["close"]
         buy_date = first_buy["date"]
-        # 找1年后和2年后的价格
-        for p in prices:
-            if p["date"] >= buy_date:
-                final_price = p["close"]
+        # 持有至最后一个交易日
+        final_price = prices[-1]["close"]
         final_date = prices[-1]["date"]
         total_return = (final_price - buy_price) / buy_price * 100
 

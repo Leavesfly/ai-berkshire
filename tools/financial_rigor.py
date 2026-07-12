@@ -1,13 +1,21 @@
 #!/usr/bin/env python3
-"""Financial Rigor Toolkit for AI Berkshire.
+"""AI Berkshire 金融数据严谨性验证工具集。
 
-Command-line tool for verifying financial data accuracy during investment research.
-Automatically called by Claude Code Skills at critical validation checkpoints.
+在投资研究过程中对财务数据做精确校验的命令行工具，由 Claude Code Skills
+在关键验证节点自动调用，用于杜绝“心算”带来的数值错误。
 
-Zero external dependencies — uses only Python stdlib (decimal, json, math, argparse).
-Requires Python >= 3.7.
+核心能力：
+    1. 市值验算     —— 股价 × 总股本 与报告市值交叉核对
+    2. 估值验算     —— 从原始数据精确推导 PE/PB/ROE/股息率等指标
+    3. 多源交叉验证 —— 同一数据点在多个信源间比对，标记偏差
+    4. Benford 定律  —— 对财务数字首位分布做造假快速筛查
+    5. 精确计算器   —— 使用十进制运算，避免浮点误差
+    6. 三情景估值   —— 乐观/中性/悲观下的目标股价推演
 
-Usage (called automatically by Skills, no manual execution needed):
+设计原则：零外部依赖，仅使用 Python 标准库（decimal/json/math/argparse），
+要求 Python >= 3.7；所有计算基于 decimal.Decimal，结果可审计、可复现。
+
+用法（通常由 Skills 自动调用，无需手动执行）：
     python3 tools/financial_rigor.py verify-market-cap --price 510 --shares 9.11e9 --reported 4.65e12 --currency HKD
     python3 tools/financial_rigor.py verify-valuation --price 510 --eps 23.5 --bvps 120 --fcf-per-share 18 --dividend 2.4
     python3 tools/financial_rigor.py cross-validate --field revenue --values '{"年报": 7518, "Yahoo": 7500, "StockAnalysis": 7520}' --unit 亿
@@ -18,27 +26,28 @@ Usage (called automatically by Skills, no manual execution needed):
 import argparse
 import json
 import math
-import sys
-from decimal import Decimal, Context, ROUND_HALF_EVEN, InvalidOperation
+from decimal import Decimal, Context, ROUND_HALF_EVEN
 
 # ---------------------------------------------------------------------------
-# Exact Decimal Engine (no floating-point drift)
+# 精确十进制引擎（避免浮点漂移）
 # ---------------------------------------------------------------------------
 
 _CTX = Context(prec=28, rounding=ROUND_HALF_EVEN)
 
 
 def exact(value) -> Decimal:
-    """Convert any numeric to exact Decimal, avoiding float traps."""
+    """将任意数值转换为精确的 Decimal，规避浮点数陷阱。
+
+    统一先转成字符串再构造 Decimal（如 0.1 → "0.1"），
+    避免 Decimal(0.1) 产生的二进制误差。
+    """
     if isinstance(value, Decimal):
         return value
-    if isinstance(value, float):
-        return Decimal(str(value))
     return Decimal(str(value))
 
 
 def fmt_number(d: Decimal, unit: str = "") -> str:
-    """Format large numbers in human-readable form (亿/万亿/B/T)."""
+    """将大额数字格式化为易读形式（亿 / 万亿 / B / T）。"""
     v = float(d)
     abs_v = abs(v)
     if unit in ("亿", "亿元", "亿港元", "亿美元"):
@@ -59,7 +68,7 @@ def fmt_number(d: Decimal, unit: str = "") -> str:
 # ---------------------------------------------------------------------------
 
 def verify_market_cap(price, shares, reported_cap, currency=""):
-    """Verify market cap = price × shares, compare with reported value."""
+    """验算市值：计算「股价 × 总股本」并与报告市值比对，偏差 > 5% 判为不通过。"""
     p = exact(price)
     s = exact(shares)
     r = exact(reported_cap)
@@ -97,7 +106,7 @@ def verify_market_cap(price, shares, reported_cap, currency=""):
 
 def verify_valuation(price, eps=None, bvps=None, fcf_per_share=None,
                      dividend=None, revenue_per_share=None):
-    """Calculate and verify key valuation ratios from raw inputs."""
+    """从原始数据精确推导并验证关键估值指标（PE/PB/ROE/P-FCF/股息率/PS）。"""
     p = exact(price)
 
     print("=" * 60)
@@ -165,7 +174,7 @@ def verify_valuation(price, eps=None, bvps=None, fcf_per_share=None,
 # ---------------------------------------------------------------------------
 
 def cross_validate(field_name, source_values: dict, unit="", tolerance_pct=2.0):
-    """Compare a data point across multiple sources, flag discrepancies."""
+    """多源交叉验证：以中位数为基准比对各信源数值，标记超出容差的偏差。"""
     print("=" * 60)
     print(f"交叉验证: {field_name} (Cross-Validation)")
     print("=" * 60)
@@ -212,7 +221,11 @@ _BENFORD = {d: math.log10(1 + 1/d) for d in range(1, 10)}
 
 
 def benford_check(values: list):
-    """Quick Benford's Law check on a list of financial values."""
+    """对一组财务数字做 Benford 定律快速检测，用于造假线索初筛。
+
+    统计首位数字（1-9）的分布，与 Benford 理论分布比较，
+    通过 MAD（平均绝对偏差）和卡方值判断符合度；样本量 < 50 时不可靠。
+    """
     print("=" * 60)
     print("Benford定律检测 (Financial Data Fabrication Check)")
     print("=" * 60)
@@ -294,14 +307,14 @@ def exact_calc(expr: str):
     print("精确计算 (Exact Calculator)")
     print("=" * 60)
 
-    # Safe evaluation: only allow numbers and arithmetic
+    # 安全校验：仅允许数字、四则运算符、括号与科学计数法字符
     allowed = set("0123456789.+-*/() eE")
     if not all(c in allowed for c in expr.replace(" ", "")):
         print(f"  ❌ 不安全的表达式: {expr}")
         return None
 
     try:
-        # Replace scientific notation for Decimal compatibility
+        # 表达式已通过字符白名单校验，此处禁用内建函数后安全求值
         result = eval(expr, {"__builtins__": {}}, {})
         d_result = exact(result)
         print(f"  表达式: {expr}")
@@ -321,7 +334,7 @@ def three_scenario_valuation(current_price, current_eps, shares_billion,
                              growth_optimistic, growth_neutral, growth_pessimistic,
                              pe_optimistic, pe_neutral, pe_pessimistic,
                              years=3, currency=""):
-    """Calculate three-scenario target prices with exact arithmetic."""
+    """三情景估值：按乐观/中性/悲观的增速与目标 PE，精确推演各情景目标股价。"""
     print("=" * 60)
     print("三情景估值模型 (Three-Scenario Valuation)")
     print("=" * 60)
@@ -361,7 +374,7 @@ def three_scenario_valuation(current_price, current_eps, shares_billion,
 
 
 # ---------------------------------------------------------------------------
-# CLI Entry Point
+# 命令行入口
 # ---------------------------------------------------------------------------
 
 def main():

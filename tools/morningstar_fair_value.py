@@ -29,6 +29,7 @@ OUTPUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "dat
 
 
 def fetch_page(page: int) -> dict:
+    """抓取 Morningstar 筛选器指定页的数据（curl 直连，返回解析后的 JSON）。"""
     url = API_BASE.format(page=page, page_size=PAGE_SIZE)
     result = subprocess.run(
         ["curl", "-s", "-H", "User-Agent: Mozilla/5.0", url],
@@ -38,6 +39,7 @@ def fetch_page(page: int) -> dict:
 
 
 def extract_ticker(tenforeid: str) -> str:
+    """从 Morningstar 的 TenforeId（形如 126.1.AAPL）中提取股票代码。"""
     if not tenforeid:
         return ""
     parts = tenforeid.split(".")
@@ -45,6 +47,7 @@ def extract_ticker(tenforeid: str) -> str:
 
 
 def main():
+    """抓取全部有公允价值估计的美股，计算潜在涨幅并输出 Top 100，同时保存完整 CSV。"""
     print(f"\n{'='*80}")
     print(f"  Morningstar 公允价值筛选  {datetime.now().strftime('%Y-%m-%d %H:%M')}")
     print(f"{'='*80}\n")

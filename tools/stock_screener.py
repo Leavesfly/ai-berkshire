@@ -22,7 +22,6 @@ import os
 import subprocess
 import sys
 from datetime import datetime, timedelta
-from collections import OrderedDict
 
 # ============================================================
 # 配置
@@ -41,12 +40,22 @@ DEFAULT_WATCHLIST = {
     "a_share": [],  # A股需要不同数据源，后续扩展
 }
 
+# 信号分级 → 展示用图标
+_GRADE_SYMBOL = {
+    "BUY_8%": "🔴", "BUY_5%": "🟡", "BUY_3%": "🟢",
+    "WATCH": "👀", "PASS": "⬜", "SKIP": "  ",
+}
+
 # ============================================================
 # 价格数据获取（通过curl绕过Python SSL问题）
 # ============================================================
 
 def fetch_prices_curl(ticker, days=120):
-    """用curl获取Yahoo Finance日线数据"""
+    """用 curl 获取 Yahoo Finance 日线数据（绕过 Python SSL 限制）。
+
+    返回按日期升序的 [{date, close, high, volume}, ...]，
+    数据不足 60 个交易日或请求失败时返回 None。
+    """
     end_ts = int(datetime.now().timestamp())
     start_ts = int((datetime.now() - timedelta(days=days)).timestamp())
     url = (
@@ -73,7 +82,7 @@ def fetch_prices_curl(ticker, days=120):
                 dt = datetime.fromtimestamp(ts).strftime("%Y-%m-%d")
                 rows.append({"date": dt, "close": c, "high": h, "volume": v})
         return rows if len(rows) > 60 else None
-    except Exception as e:
+    except Exception:
         return None
 
 
@@ -90,6 +99,7 @@ def load_fundamentals():
 
 
 def save_fundamentals(data):
+    """将基本面数据写回 JSON 文件。"""
     os.makedirs(DATA_DIR, exist_ok=True)
     with open(FUND_FILE, "w") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
@@ -120,7 +130,10 @@ def update_fundamental_interactive(ticker):
 # ============================================================
 
 def check_momentum(prices):
-    """检查最近交易日是否触发动量信号"""
+    """检查最近交易日是否触发动量信号（60日新高 + 放量确认）。
+
+    返回信号详情字典；价格样本不足 61 个交易日时返回 None。
+    """
     if len(prices) < 61:
         return None
 
@@ -254,7 +267,10 @@ def check_value(ticker, signal_date=None):
 # ============================================================
 
 def grade_signal(momentum, value):
-    """综合评级"""
+    """综合动量与价值评分，输出分级（含仓位建议）。
+
+    返回 (grade, reason, advice) 三元组。
+    """
     if not momentum or not momentum["triggered"]:
         return "SKIP", "无动量信号", ""
 
@@ -304,8 +320,7 @@ def scan_ticker(ticker, verbose=True):
     if verbose:
         # 紧凑输出
         m = momentum
-        symbol = {"BUY_8%": "🔴", "BUY_5%": "🟡", "BUY_3%": "🟢", "WATCH": "👀", "PASS": "⬜", "SKIP": "  "}
-        s = symbol.get(grade, "  ")
+        s = _GRADE_SYMBOL.get(grade, "  ")
 
         if grade.startswith("BUY"):
             print(f"  {s} {ticker:<8} ${m['close']:<8} 30日+{m['pct_30d']}% 放量{m['vol_ratio']}x  → {grade} {reason}")

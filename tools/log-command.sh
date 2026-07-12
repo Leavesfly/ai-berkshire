@@ -1,6 +1,6 @@
 #!/bin/bash
-# 记录用户指令到日志文件
-# 由 user_prompt_submit hook 调用，stdin 接收用户输入
+# 记录用户指令到日志文件（JSONL 格式）
+# 由 user_prompt_submit hook 调用：stdin 接收用户输入，每累计 10 条给出补摘要提醒
 
 LOG_DIR="$HOME/ai-berkshire/logs"
 LOG_FILE="$LOG_DIR/command-log.jsonl"

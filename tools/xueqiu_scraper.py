@@ -40,11 +40,13 @@ from playwright.async_api import async_playwright
 
 
 def is_match(text, keywords):
+    """判断文本是否命中任一关键词（大小写不敏感）。"""
     t = (text or '').lower()
     return any(k.lower() in t for k in keywords)
 
 
 def parse_ts(ts):
+    """将毫秒级时间戳转为 'YYYY-MM-DD HH:MM'，解析失败时原样返回。"""
     try:
         return datetime.fromtimestamp(int(ts) / 1000).strftime('%Y-%m-%d %H:%M')
     except Exception:
@@ -52,7 +54,9 @@ def parse_ts(ts):
 
 
 def clean(s):
-    if not s: return ''
+    """清洗 HTML 片段：去标签、还原常见实体、剔除数字实体，返回纯文本。"""
+    if not s:
+        return ''
     s = re.sub(r'<[^>]+>', '', s)
     for ent, rep in [('&amp;', '&'), ('&lt;', '<'), ('&gt;', '>'), ('&nbsp;', ' ')]:
         s = s.replace(ent, rep)
@@ -101,6 +105,7 @@ async def browser_fetch_json(page, url, timeout_s=15):
 
 
 async def verify_login(page, user_id):
+    """通过请求用户时间线接口验证登录态是否有效。"""
     test = await browser_fetch_json(
         page,
         f'https://xueqiu.com/v4/statuses/user_timeline.json?user_id={user_id}&page=2&count=1'
@@ -322,6 +327,7 @@ async def fetch_all_timeline(page, user_id, keywords, progress_path, dump_all_pa
 
 
 def format_md(collected, user_id, keywords):
+    """将采集到的帖子按时间排序，渲染为带来源标注的 Markdown 文本。"""
     posts = sorted(collected.values(), key=lambda x: x.get('date', ''))
     lines = [
         f"# 雪球发言整理：用户 {user_id}",
@@ -366,6 +372,7 @@ def parse_args():
 
 
 def filter_from_cache(cache_path, keywords, user_id):
+    """从全量缓存 JSON 中按关键词过滤，返回 {id: 帖子} 字典。"""
     posts = json.load(open(cache_path))
     out = []
     for p in posts:

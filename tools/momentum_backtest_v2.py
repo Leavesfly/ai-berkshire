@@ -9,7 +9,6 @@ AMD/MU：从JSON文件加载真实日线数据
 """
 
 import json
-import sys
 import os
 from datetime import datetime
 from collections import OrderedDict
@@ -69,6 +68,7 @@ FUNDAMENTALS = {
 # ============================================================
 
 def load_prices_from_json(filepath):
+    """从本地 Yahoo Finance JSON 文件加载日线数据，返回 [{date, close, high, volume}, ...]。"""
     with open(filepath) as f:
         data = json.load(f)
     result = data["chart"]["result"][0]
@@ -90,6 +90,7 @@ def load_prices_from_json(filepath):
 # ============================================================
 
 def scan_momentum(prices):
+    """扫描动量信号：60日新高 + 近5日均量 > 20日均量的 1.5 倍。"""
     signals = []
     for i in range(60, len(prices)):
         row = prices[i]
@@ -117,6 +118,7 @@ def scan_momentum(prices):
 # ============================================================
 
 def find_fund(ticker, date):
+    """返回给定日期前最近的一期财报及其上一期：((日期, 数据), (上期日期, 数据))。"""
     quarters = list(FUNDAMENTALS[ticker]["quarters"].items())
     latest = None
     prev = None
@@ -128,6 +130,7 @@ def find_fund(ticker, date):
 
 
 def verify(fund, prev_fund):
+    """5 维价值验证，返回 (得分, 各维度通过情况)。"""
     if not fund:
         return 0, {}
     d = fund[1]
@@ -164,6 +167,7 @@ def verify(fund, prev_fund):
 # ============================================================
 
 def backtest(ticker, prices):
+    """对单个标的执行完整回测，输出信号与首次买入收益，返回首个买入信号。"""
     name = FUNDAMENTALS[ticker]["name"]
     print(f"\n{'='*70}")
     print(f"  {name} ({ticker}) 回测")
@@ -250,6 +254,7 @@ def backtest(ticker, prices):
 # ============================================================
 
 def nvda_manual_analysis():
+    """英伟达手工回测：Yahoo API 受限，改用已知历史价格关键节点分析。"""
     print(f"\n{'='*70}")
     print(f"  英伟达 (NVDA) 手工回测分析")
     print(f"  （Yahoo API受限，使用已知历史价格节点）")

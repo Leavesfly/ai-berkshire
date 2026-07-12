@@ -18,7 +18,8 @@ import json
 import os
 import subprocess
 import sys
-from decimal import Decimal, ROUND_HALF_EVEN
+from decimal import Decimal
+from urllib.parse import urlencode
 
 _TIMEOUT = 15
 
@@ -41,9 +42,8 @@ def _curl(url):
 
 
 def _curl_json(url, params=None):
-    """curl 获取 JSON。"""
+    """用 curl 获取并解析 JSON；params 会编码为查询字符串附加到 url。"""
     if params:
-        from urllib.parse import urlencode
         url = f"{url}?{urlencode(params)}"
     return json.loads(_curl(url))
 
@@ -52,16 +52,27 @@ def _curl_json(url, params=None):
 # 腾讯行情 API（稳定可靠，无需鉴权）
 # ---------------------------------------------------------------------------
 
-def _qq_code(code: str) -> str:
-    """将股票代码转为腾讯行情格式。"""
-    code = code.strip().replace(".SH", "").replace(".SZ", "").replace(".BJ", "")
+def _normalize_code(code: str) -> str:
+    """去掉交易所后缀（.SH/.SZ/.BJ），返回纯数字股票代码。"""
+    return code.strip().upper().replace(".SH", "").replace(".SZ", "").replace(".BJ", "")
+
+
+def _market(code: str) -> str:
+    """根据代码首位数字推断交易所：沪 SH / 深 SZ / 北 BJ。"""
+    code = _normalize_code(code)
     if code.startswith(("6", "9", "5")):
-        return f"sh{code}"
-    elif code.startswith(("0", "3", "2", "1")):
-        return f"sz{code}"
-    elif code.startswith(("4", "8")):
-        return f"bj{code}"
-    return f"sh{code}"
+        return "SH"
+    if code.startswith(("0", "3", "2", "1")):
+        return "SZ"
+    if code.startswith(("4", "8")):
+        return "BJ"
+    return "SH"
+
+
+def _qq_code(code: str) -> str:
+    """将股票代码转为腾讯行情格式（如 600519 → sh600519）。"""
+    code = _normalize_code(code)
+    return f"{_market(code).lower()}{code}"
 
 
 def _parse_qq_quote(raw: str) -> dict:
@@ -94,11 +105,11 @@ def _parse_qq_quote(raw: str) -> dict:
         "pb": fields[46] if len(fields) > 46 else "-",
         "high_52w": fields[47] if len(fields) > 47 else "-",
         "low_52w": fields[48] if len(fields) > 48 else "-",
-        "total_shares": fields[38] if len(fields) > 38 else "-",  # will recalculate
     }
 
 
 def _fmt_yi(value) -> str:
+    """将数值按量级格式化为「亿 / 万」单位，无法解析时原样返回。"""
     if value is None or value == "-" or value == "":
         return "-"
     try:
@@ -113,6 +124,7 @@ def _fmt_yi(value) -> str:
 
 
 def _fmt_pct(value) -> str:
+    """将数值格式化为百分比字符串（保留两位小数）。"""
     if value is None or value == "-" or value == "":
         return "-"
     try:
@@ -199,8 +211,8 @@ def cmd_financials(code: str):
     d = _parse_qq_quote(raw)
     name = d.get("name", code) if d else code
 
-    code_clean = code.strip().replace(".SH", "").replace(".SZ", "").replace(".BJ", "")
-    market = "SH" if code_clean.startswith(("6", "9", "5")) else "SZ"
+    code_clean = _normalize_code(code)
+    market = _market(code_clean)
 
     # 东方财富 datacenter API（年报数据）
     fin_url = "https://datacenter.eastmoney.com/securities/api/data/get"
