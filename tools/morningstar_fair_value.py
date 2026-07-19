@@ -35,7 +35,13 @@ def fetch_page(page: int) -> dict:
         ["curl", "-s", "-H", "User-Agent: Mozilla/5.0", url],
         capture_output=True, text=True, timeout=30,
     )
-    return json.loads(result.stdout)
+    try:
+        return json.loads(result.stdout)
+    except (json.JSONDecodeError, ValueError):
+        raise ConnectionError(
+            "Morningstar 接口返回非 JSON（接口/内嵌 key 可能已失效）。"
+            "⚠️ FALLBACK: 请改用 WebSearch + skills/financial-data/SKILL.md 规范取公允价值/估值数据。"
+        )
 
 
 def extract_ticker(tenforeid: str) -> str:

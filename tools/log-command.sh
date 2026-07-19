@@ -1,8 +1,10 @@
 #!/bin/bash
 # 记录用户指令到日志文件（JSONL 格式）
 # 由 user_prompt_submit hook 调用：stdin 接收用户输入，每累计 10 条给出补摘要提醒
+# 日志目录按脚本自身位置定位（仓库根/logs），不依赖仓库存放路径
 
-LOG_DIR="$HOME/ai-berkshire/logs"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+LOG_DIR="$SCRIPT_DIR/../logs"
 LOG_FILE="$LOG_DIR/command-log.jsonl"
 COUNTER_FILE="$LOG_DIR/.counter"
 

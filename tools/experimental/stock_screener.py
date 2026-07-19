@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
 """
 stock_screener.py — 动量发现 + 价值验证 选股筛
+
+⚠️ 实验性工具：本脚本属于动量交易框架，**不属于 AI Berkshire 四大师价值投资方法论体系**，
+不被任何 SKILL.md 流程调用，仅供独立实验使用。动量信号不得混入价值研究报告。
+
 用法：
-  python3 stock_screener.py                   # 扫描全部 watchlist
-  python3 stock_screener.py NVDA TSLA GOOG    # 扫描指定标的
-  python3 stock_screener.py --update MU       # 更新 MU 的基本面数据
+  python3 tools/experimental/stock_screener.py                   # 扫描全部 watchlist
+  python3 tools/experimental/stock_screener.py NVDA TSLA GOOG    # 扫描指定标的
+  python3 tools/experimental/stock_screener.py --update MU       # 更新 MU 的基本面数据
 
 框架：
   第一层（动量发现）：60日新高 + 放量确认 → 进入待选池
@@ -27,7 +31,7 @@ from datetime import datetime, timedelta
 # 配置
 # ============================================================
 
-DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data")
+DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "data")
 FUND_FILE = os.path.join(DATA_DIR, "fundamentals.json")
 WATCHLIST_FILE = os.path.join(DATA_DIR, "watchlist.json")
 
@@ -185,6 +189,16 @@ def check_value(ticker, signal_date=None):
 
     quarters = funds[ticker]["quarters"]
     sorted_q = sorted(quarters.items(), key=lambda x: x[0])
+
+    # 时效性检查：最新季度距今 > 120 天则提醒基本面过期（仅实时扫描模式）
+    if not signal_date and sorted_q:
+        latest_date = sorted_q[-1][0]
+        try:
+            age_days = (datetime.now() - datetime.strptime(latest_date, "%Y-%m-%d")).days
+            if age_days > 120:
+                print(f"     ⚠️  {ticker} 基本面数据过期（最新 {latest_date}，距今 {age_days} 天），信号不可靠，请先 --update {ticker}")
+        except ValueError:
+            pass
 
     # 找最近两个季度
     if signal_date:

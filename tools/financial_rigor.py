@@ -173,8 +173,12 @@ def verify_valuation(price, eps=None, bvps=None, fcf_per_share=None,
 # 3. Cross-Source Data Validation (多源交叉验证)
 # ---------------------------------------------------------------------------
 
-def cross_validate(field_name, source_values: dict, unit="", tolerance_pct=2.0):
-    """多源交叉验证：以中位数为基准比对各信源数值，标记超出容差的偏差。"""
+def cross_validate(field_name, source_values: dict, unit="", tolerance_pct=1.0):
+    """多源交叉验证：以中位数为基准比对各信源数值。
+
+    容差分档与 `skills/financial-data/SKILL.md` 规范对齐：
+      ≤ 1% ✅ 一致；1%~5% ⚠️ 标记差异（可能是口径/汇率）；> 5% ❌ 重大差异，须查原始财报。
+    """
     print("=" * 60)
     print(f"交叉验证: {field_name} (Cross-Validation)")
     print("=" * 60)
@@ -193,24 +197,32 @@ def cross_validate(field_name, source_values: dict, unit="", tolerance_pct=2.0):
     print()
 
     all_ok = True
+    has_warn = False
     for src, val in values.items():
         dev = abs(float(val) - median) / median * 100 if median != 0 else 0
-        status = "✅" if dev <= tolerance_pct else "❌"
-        if dev > tolerance_pct:
+        if dev <= tolerance_pct:
+            status = "✅"
+        elif dev <= 5:
+            status = "⚠️"
+            has_warn = True
+        else:
+            status = "❌"
             all_ok = False
         print(f"  {status} {src:20s}: {fmt_number(val)} {unit}  (偏差 {dev:.2f}%)")
 
     print()
-    if all_ok:
+    if all_ok and not has_warn:
         print(f"  ✅ 所有来源偏差 ≤ {tolerance_pct}%, 数据一致")
+    elif all_ok:
+        print(f"  ⚠️  存在来源偏差在 {tolerance_pct}%~5% 之间, 请标注差异及可能原因（GAAP/Non-GAAP、汇率、财年口径）")
     else:
-        print(f"  ⚠️  存在来源偏差 > {tolerance_pct}%, 请核实差异原因")
-        print(f"     建议: 优先采用公司年报/交易所数据")
+        print(f"  ❌ 存在来源偏差 > 5%, 属重大差异, 不得直接使用")
+        print(f"     必须查原始财报核实; 优先采用公司年报/交易所数据")
 
     # Consensus value
     consensus = median
     print(f"\n  共识值 (加权中位数): {fmt_number(exact(consensus))} {unit}")
-    return {"consensus": consensus, "all_consistent": all_ok}
+    return {"consensus": consensus, "all_consistent": all_ok and not has_warn, "has_major_diff": not all_ok}
 
 
 # ---------------------------------------------------------------------------
@@ -309,8 +321,13 @@ def exact_calc(expr: str):
 
     # 安全校验：仅允许数字、四则运算符、括号与科学计数法字符
     allowed = set("0123456789.+-*/() eE")
-    if not all(c in allowed for c in expr.replace(" ", "")):
+    compact = expr.replace(" ", "")
+    if not all(c in allowed for c in compact):
         print(f"  ❌ 不安全的表达式: {expr}")
+        return None
+    # 防护：禁用幂运算与超长表达式，避免恶意/意外的资源耗尽（如 9**9**9）
+    if "**" in compact or len(compact) > 200:
+        print(f"  ❌ 表达式含幂运算或过长（仅支持 + - * / 与括号，长度 ≤ 200）: {expr}")
         return None
 
     try:
@@ -342,6 +359,18 @@ def three_scenario_valuation(current_price, current_eps, shares_billion,
     p = exact(current_price)
     eps = exact(current_eps)
     shares = exact(shares_billion)
+
+    # 防御：增速应为小数（如 0.15 = 15%）；若绝对值 > 1.5 则判定为误传百分数，自动换算并提示
+    def _normalize_growth(g):
+        g = float(g)
+        if abs(g) > 1.5:
+            print(f"  ⚠️  增速 {g} 疑似以百分数传入，已自动换算为 {g/100}（正确格式：0.15 表示 15%）")
+            return g / 100
+        return g
+
+    growth_optimistic = _normalize_growth(growth_optimistic)
+    growth_neutral = _normalize_growth(growth_neutral)
+    growth_pessimistic = _normalize_growth(growth_pessimistic)
 
     scenarios = [
         ("乐观 (Bull)", growth_optimistic, pe_optimistic),
@@ -413,7 +442,7 @@ Examples:
     cv.add_argument("--field", required=True, help="数据字段名")
     cv.add_argument("--values", required=True, help="JSON: {来源: 数值}")
     cv.add_argument("--unit", default="")
-    cv.add_argument("--tolerance", type=float, default=2.0, help="容差百分比")
+    cv.add_argument("--tolerance", type=float, default=1.0, help="容差百分比（默认1%，与 financial-data 规范对齐）")
 
     # benford
     bf = sub.add_parser("benford", help="Benford定律检测")

@@ -190,16 +190,15 @@ def cmd_valuation(code: str):
     print(f"  52周最高:   {d['high_52w']}")
     print(f"  52周最低:   {d['low_52w']}")
 
-    # 市值验算
+    # 推算总股本仅供参考（由市值÷股价倒推，不构成独立验证）。
+    # 如需真正验算市值，请从巨潮/东财F10取独立的总股本数据，
+    # 再用 tools/financial_rigor.py verify-market-cap 验证。
     try:
         p = Decimal(price)
         cap = Decimal(market_cap_yi) * Decimal("1e8")
         shares = cap / p
-        print(f"\n  推算总股本: {_fmt_yi(float(shares))}股")
-        calc_cap = p * shares
-        reported_cap = Decimal(market_cap_yi) * Decimal("1e8")
-        diff = abs(calc_cap - reported_cap) / reported_cap * 100
-        print(f"  市值验算:   ✅ 一致（推算法，偏差 {float(diff):.1f}%）")
+        print(f"\n  推算总股本: {_fmt_yi(float(shares))}股 [仅供参考，非独立验证]")
+        print(f"  提示: 独立市值验算请取交易所/F10总股本后调用 financial_rigor.py verify-market-cap")
     except Exception:
         pass
 

@@ -21,11 +21,25 @@
 
 - 涉及金额、市值、估值的计算**必须调用 [`tools/financial_rigor.py`](tools/financial_rigor.py)**，禁止心算。
 - 报告发布前执行数据抽检准出流程（[`tools/report_audit.py`](tools/report_audit.py)）。
+- 工具调用语法与容差分档的唯一权威定义：[`skills/financial-data/references/verification-playbook.md`](skills/financial-data/references/verification-playbook.md)。
+
+## 四大师视角一致性
+
+- 模拟巴菲特/芒格/段永平/李录视角、分配角色分工、撰写大师点评时，以 [`references/masters-profiles.md`](references/masters-profiles.md) 的画像定义为准，不得越出各自视角边界，不得虚构大师未说过的具体表述。
 
 ## 工具调用工作目录约定
 
 - 所有 `tools/*.py` 脚本均以**技能根目录**（本仓库根）为基准的相对路径调用，例如 `python3 tools/financial_rigor.py ...`。
-- 执行前必须确保当前工作目录为技能根目录；作为独立插件运行、无法保证 `cwd` 时，先定位到本 `CLAUDE.md` 所在目录再调用（例如 `cd "$(dirname 技能根)" && python3 tools/xxx.py ...`），避免相对路径失效。
+- 执行前必须确保当前工作目录为技能根目录；作为独立插件运行、无法保证 `cwd` 时，先定位到本 `CLAUDE.md` 所在的技能根目录再调用（例如 `cd <本CLAUDE.md所在目录> && python3 tools/xxx.py ...`），避免相对路径失效。
+
+## 报告输出路径约定（所有子流程必须遵守）
+
+- **公司级报告**：统一写入 `reports/{公司名}/{公司名}-{技能名}-{YYYYMMDD}.md`（如 `reports/腾讯/腾讯-research-20260719.md`）。
+- **行业/主题级报告**：写入 `reports/{行业名}-{技能名}-{YYYYMMDD}.md`。
+- **投资论文快照**：固定为 `reports/{公司名}-thesis.md`（`thesis-tracker` / `thesis-drift` 依赖此路径）。
+- **组合文件**：固定为 `reports/portfolio-latest.md`。
+- **禁止**将报告写入用户家目录（`~/`）或仓库外路径；目录不存在时先创建。
+- 上游技能的报告是下游技能的输入（如 `thesis-tracker` 读取 `investment-research`/`investment-team` 报告），路径一致性是数据链路成立的前提。
 
 ## 语言与风格
 

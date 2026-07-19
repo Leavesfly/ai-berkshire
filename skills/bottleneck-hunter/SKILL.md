@@ -356,7 +356,9 @@ B级瓶颈（有压力）：
 
 ## 每小时扫描模式（定时任务使用）
 
-每小时执行一次，采用"只在有料时出报告"的模式：
+> **前置条件**：本模式需要外部调度器（如 cron / CI 定时任务）周期性调用本技能；项目本身不提供定时基础设施。无调度器时，可手动按需执行单次扫描。
+
+每小时执行一次，采用“只在有料时出报告”的模式：
 
 ### 扫描流程（每小时）
 
@@ -469,7 +471,7 @@ B级瓶颈（有压力）：
 
 1. **报告位置**：
    - 完整扫描：`reports/bottleneck-map/{趋势名}-bottleneck-{YYYYMMDD}.md`
-   - 每日扫描：`reports/bottleneck-map/daily/{YYYY-MM-DD}-{am/pm}.md`
+   - 每小时/每日扫描：`reports/bottleneck-map/{YYYY-MM-DD}/HH-MM-*.md`（每天一个文件夹，文件命名规则见上方“报告输出规则”）
    - 瓶颈总地图：`reports/bottleneck-map/master-map.md`
    - 观察名单：`reports/bottleneck-map/watchlist.md`
 2. **语言**：中文

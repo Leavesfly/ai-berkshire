@@ -72,6 +72,11 @@ def _is_valid_label(label: str) -> bool:
              'n/a', '—', '-', '/', '合计', 'total', '单位', '趋势'}
     if label.lower() in _SKIP:
         return False
+    # 非财务类标签（评分/星级/排名/章节/清单序号等），不作为抽检对象，避免假阳性
+    if re.search(r'(评分|评级|星级|排名|权重|字数|页码|序号|数量|条数|篇数|个数|信心度|健康度)', label):
+        return False
+    if re.search(r'第.{0,4}(章|节|关|步|篇|页|层)', label):
+        return False
     return True
 
 
@@ -199,11 +204,23 @@ def extract_data_points(md_text: str) -> list:
 
 
 def sample_points(points: list, ratio: float = 0.15, seed: int = None) -> list:
-    """随机抽取 ratio 比例的数据点，最少 3 个，最多 30 个。"""
+    """随机抽取 ratio 比例的数据点，最少 3 个，最多 30 个。
+
+    优先抽取带财务单位（亿/万亿/%/x倍/B/M/T）的数据点；
+    无单位的裸数字噪声概率高，仅在带单位数据点不足时补充。
+    """
     n = max(3, min(30, math.ceil(len(points) * ratio)))
     n = min(n, len(points))
     rng = Random(seed)
-    sampled = rng.sample(points, n)
+    with_unit = [p for p in points if p.get('unit')]
+    without_unit = [p for p in points if not p.get('unit')]
+    if len(with_unit) >= n:
+        sampled = rng.sample(with_unit, n)
+    else:
+        sampled = list(with_unit)
+        remaining = n - len(sampled)
+        if without_unit and remaining > 0:
+            sampled += rng.sample(without_unit, min(remaining, len(without_unit)))
     # 按行号排序，方便人工比对
     return sorted(sampled, key=lambda p: p['line_number'])
 
