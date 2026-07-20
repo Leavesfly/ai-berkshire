@@ -29,12 +29,13 @@ import re
 import sys
 from random import Random
 
-# 终端 ANSI 颜色（用于判决结果高亮显示）
-BOLD = '\033[1m'
-RED = '\033[91m'
-GREEN = '\033[92m'
-YELLOW = '\033[93m'
-RESET = '\033[0m'
+# 终端 ANSI 颜色（用于判决结果高亮显示）；非 TTY（管道/重定向）时自动禁用，避免转义码污染日志
+_USE_COLOR = sys.stdout.isatty()
+BOLD = '\033[1m' if _USE_COLOR else ''
+RED = '\033[91m' if _USE_COLOR else ''
+GREEN = '\033[92m' if _USE_COLOR else ''
+YELLOW = '\033[93m' if _USE_COLOR else ''
+RESET = '\033[0m' if _USE_COLOR else ''
 
 # ---------------------------------------------------------------------------
 # 数据点提取：从 Markdown 报告中识别财务数字
@@ -266,8 +267,15 @@ def render_verdict(results: list, report_name: str = "") -> dict:
 
     fail_items = []
     warn_items = []
+    skipped_bad = []
 
-    for item in results:
+    for idx, item in enumerate(results, start=1):
+        # 字段完整性防护：缺失必需字段的项友好跳过，不崩溃
+        if not isinstance(item, dict) or item.get('id') is None \
+                or not item.get('label') or item.get('reported_value') is None:
+            skipped_bad.append(idx)
+            print(f'  ⛔ 第 {idx} 项缺少必需字段（id/label/reported_value），已跳过: {str(item)[:60]}')
+            continue
         label = item.get('label', '?')
         reported = float(item.get('reported_value', 0))
         unit = item.get('unit', '')
@@ -293,7 +301,12 @@ def render_verdict(results: list, report_name: str = "") -> dict:
 
         # 判断
         pass1 = diff1 <= _TOLERANCE
-        pass2 = (diff2 is None) or (diff2 <= _TOLERANCE)
+
+        if diff2 is None:
+            # 单源核验：主来源直接定生死（playbook：任意抽检点偏差 >1% 即打回）
+            pass2 = pass1
+        else:
+            pass2 = diff2 <= _TOLERANCE
 
         if pass1 and pass2:
             status = f'{GREEN}✅ 通过{RESET}'
@@ -338,10 +351,14 @@ def render_verdict(results: list, report_name: str = "") -> dict:
     print()
     print('-' * 70)
 
-    total = len([r for r in results if r.get('fetched_value') is not None])
+    total = len([r for r in results if isinstance(r, dict) and r.get('fetched_value') is not None
+                 and r.get('id') is not None and r.get('label') and r.get('reported_value') is not None])
     fail_count = len(fail_items)
     warn_count = len(warn_items)
     pass_count = total - fail_count - warn_count
+
+    if skipped_bad:
+        print(f'  ⛔ {len(skipped_bad)} 项字段不完整已跳过（序号: {skipped_bad}），请补齐 id/label/reported_value 后重跑')
 
     print(f'  抽检总数: {total}  |  通过: {GREEN}{pass_count}{RESET}  |  警告: {YELLOW}{warn_count}{RESET}  |  不通过: {RED}{fail_count}{RESET}')
     print()
@@ -392,13 +409,16 @@ def main():
         epilog="""
 工作流程：
 
-  Step 1 — 提取数据点并随机抽样 15%，输出抽检清单：
-    python3 tools/report_audit.py extract --report reports/腾讯/腾讯-research-20260408.md
+  Step 1 — 提取数据点并随机抽样 15%，输出抽检清单（推荐写入文件）：
+    python3 tools/report_audit.py extract --report reports/腾讯/腾讯-research-20260408.md \
+      --output reports/腾讯/audit-checklist.json
 
   Step 2 — Claude 对清单中每个数据点，从可靠信源取数，
             填入 fetched_value / fetched_source / fetched_value2 / fetched_source2
 
-  Step 3 — 输入核验结果，输出准出/打回判决：
+  Step 3 — 输入核验结果，输出准出/打回判决（推荐从文件读入，避免 shell 引号问题）：
+    python3 tools/report_audit.py verdict --results-file reports/腾讯/audit-checklist.json
+    # 或内联 JSON（向后兼容）：
     python3 tools/report_audit.py verdict --results '[
       {"id":1,"label":"营业收入","reported_value":7518,"unit":"亿","fetched_value":7518,"fetched_source":"macrotrends","fetched_value2":7500,"fetched_source2":"stockanalysis"},
       ...
@@ -412,6 +432,8 @@ def main():
 
   固定随机种子（复现同一批样本）：
     python3 tools/report_audit.py extract --report reports/xxx.md --seed 42
+
+  退出码：0=准出(PASS) / 1=打回(FAIL) / 2=参数错误
         """)
 
     sub = parser.add_subparsers(dest='command')
@@ -422,10 +444,13 @@ def main():
     ext.add_argument('--ratio', type=float, default=0.15, help='抽样比例，默认 0.15')
     ext.add_argument('--seed', type=int, default=None, help='随机种子（可选，用于复现）')
     ext.add_argument('--dry-run', action='store_true', help='只打印，不输出 JSON')
+    ext.add_argument('--output', default=None,
+                     help='将抽检清单 JSON 模板写入文件（建议 reports/{公司}/audit-checklist.json，填好后传给 verdict --results-file）')
 
     # verdict
     vrd = sub.add_parser('verdict', help='根据核验结果输出准出/打回判决')
-    vrd.add_argument('--results', required=True, help='JSON 数组，含 fetched_value 等字段')
+    vrd.add_argument('--results', default=None, help='JSON 数组，含 fetched_value 等字段（与 --results-file 二选一）')
+    vrd.add_argument('--results-file', default=None, help='从 JSON 文件读入核验结果（推荐，避免 shell 引号问题）')
     vrd.add_argument('--report', default='', help='报告名称（可选，用于显示）')
     vrd.add_argument('--output-json', action='store_true', help='将判决结果以 JSON 输出到 stdout')
 
@@ -477,16 +502,42 @@ def main():
                     'fetched_value2': None,      # ← 填入副来源核验值（可选）
                     'fetched_source2': '',       # ← 填入副来源名称（可选）
                 })
-            print('抽检清单 JSON（填入 fetched_value 后，传给 verdict 命令）：')
-            print()
-            print(json.dumps(template, ensure_ascii=False, indent=2))
+            if args.output:
+                out_dir = os.path.dirname(args.output)
+                if out_dir:
+                    os.makedirs(out_dir, exist_ok=True)
+                with open(args.output, 'w', encoding='utf-8') as f:
+                    json.dump(template, f, ensure_ascii=False, indent=2)
+                print(f'抽检清单已写入：{args.output}')
+                print('填入 fetched_value 后执行：')
+                print(f'  python3 tools/report_audit.py verdict --results-file {args.output}')
+            else:
+                print('抽检清单 JSON（填入 fetched_value 后，传给 verdict 命令）：')
+                print()
+                print(json.dumps(template, ensure_ascii=False, indent=2))
 
     elif args.command == 'verdict':
+        # --results-file 优先（推荐），--results 内联方式向后兼容
+        if not args.results and not args.results_file:
+            print('❌ 需提供 --results-file <路径>（推荐）或 --results <JSON字符串>', file=sys.stderr)
+            sys.exit(2)
+        if args.results_file:
+            if not os.path.exists(args.results_file):
+                print(f'❌ 核验结果文件不存在: {args.results_file}', file=sys.stderr)
+                sys.exit(2)
+            with open(args.results_file, 'r', encoding='utf-8') as f:
+                raw = f.read()
+        else:
+            raw = args.results
         try:
-            results = json.loads(args.results)
+            results = json.loads(raw)
         except json.JSONDecodeError as e:
             print(f'❌ JSON 解析失败: {e}', file=sys.stderr)
-            sys.exit(1)
+            print('   提示：优先用 --results-file 从文件读入，避免 shell 引号转义问题', file=sys.stderr)
+            sys.exit(2)
+        if not isinstance(results, list):
+            print('❌ 核验结果必须是 JSON 数组（extract 输出的模板格式）', file=sys.stderr)
+            sys.exit(2)
 
         report_name = args.report or ''
         outcome = render_verdict(results, report_name=report_name)

@@ -175,9 +175,19 @@ description: 未上市公司研究——多 Agent 并行深度研究框架，专
 
 估值计算必须遵循 [`../../CLAUDE.md`](../../CLAUDE.md) 的金融严谨性要求，调用 `tools/financial_rigor.py`（以技能根目录为工作目录），禁止心算。
 
-### 第八步：保存报告
+### 第八步：保存报告与数据抽检
 
 将完整最终报告写入 `reports/{公司名}/{公司名}-private-{YYYYMMDD}.md`。
+
+报告写入后执行数据抽检（准出流程，CLAUDE.md 抽检政策：研报级）：
+
+```bash
+python3 tools/report_audit.py extract --report <报告文件路径>
+# 对清单每项取数核验后：
+python3 tools/report_audit.py verdict --results '<填好的JSON>' --report <报告文件名>
+```
+
+未上市公司特殊口径：抽检仅针对**可公开验证的数据点**（融资轮次金额、监管披露、上市公司关联披露中的数字）；标注 `[估计]`/🔴低置信度的推算值不入抽检范围，不得因推算值无法核验而判打回。**【准出】** 通过 → 交付；**【打回】** 有不通过 → 修正后重审。
 
 ### 第九步：清理团队
 

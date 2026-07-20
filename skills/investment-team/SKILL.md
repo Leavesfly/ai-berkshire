@@ -48,59 +48,20 @@ description: 投研团队——用多个并行 Agent 创建真正的投研团队
 
 ### 第三步：创建4个任务
 
-使用 TaskCreate 创建以下4个任务（每个都要有 subject、description、activeForm）：
+使用 TaskCreate 创建以下4个任务（每个都要有 subject、description、activeForm）。
 
-#### 任务1：商业模式分析
-- subject: `分析{公司名}商业模式、护城河与用户价值`
-- description 包含：
-  1. 商业模式本质：核心生意定义、收入结构拆解
-  2. 平台/产品飞轮效应如何运转
-  3. 护城河分析：品牌/转换成本/网络效应/规模效应/技术壁垒，逐一验证
-  4. 用户/客户价值：为各方创造了什么独特价值
-  5. 业务矩阵与协同效应
-  6. 段永平"好生意"标准评估：差异化、定价权、可持续竞争优势
-  7. 要求搜索最新财报、行业报告等公开信息
+> **渐进式披露**：4 个任务的完整 description（含全部分析条目与工具命令）已外置到 [`references/agent-briefs.md`](references/agent-briefs.md)，创建任务时将对应章节全文作为 description 传入，不得删减分析条目。
 
-#### 任务2：财务与估值分析
-- subject: `分析{公司名}财务数据、盈利能力与估值`
-- description 包含：
-  1. 近3-5年营收、净利润、经营利润趋势
-  2. 盈利能力指标：ROE、ROA、毛利率、经营利润率
-  3. 现金流分析：经营性现金流、自由现金流、资本开支
-  4. 资产负债表健康度：现金储备、负债率、流动性
-  5. 估值分析：PE/PS/PB/EV等，与历史及同业对比
-  6. 安全边际评估：内在价值 vs 当前股价
-  7. **金融严谨性验证（必须使用Bash调用工具，禁止心算）**：
-     - 市值验算：`python3 tools/financial_rigor.py verify-market-cap --price {价格} --shares {股本} --reported {报告市值} --currency {币种}`
-     - 估值验算：`python3 tools/financial_rigor.py verify-valuation --price {价格} --eps {EPS} --bvps {每股净资产}`
-     - 关键数据交叉验证：`python3 tools/financial_rigor.py cross-validate --field {字段} --values '{JSON}' --unit {单位}`
-     - 三情景估值：`python3 tools/financial_rigor.py three-scenario --price {价格} --eps {EPS} --shares {股本亿} --growth {乐观} {中性} {悲观} --pe {乐观PE} {中性PE} {悲观PE}`
-     - 将工具输出结果直接嵌入报告中作为验证记录
-
-#### 任务3：行业与竞争分析
-- subject: `分析{行业}行业格局与{公司名}竞争态势`
-- description 包含：
-  1. 行业规模与增长：市场规模、增速、渗透率
-  2. 竞争格局：主要对手市场份额、竞争策略对比
-  3. 核心竞争者威胁评估：逐个分析主要竞争对手
-  4. 各细分赛道格局
-  5. 行业趋势：技术变革、政策影响、新进入者
-  6. 产业链分析：上中下游价值分配
-  7. 要求搜索最新行业数据和竞争动态
-
-#### 任务4：风险与管理层评估
-- subject: `评估{公司名}投资风险与管理层质量`
-- description 包含：
-  1. 管理层评估：CEO能力圈、诚信度、战略眼光、资本配置能力、历史决策质量
-  2. 监管风险：当前及潜在监管影响
-  3. 竞争风险：各竞争对手威胁程度评估
-  4. 业务风险：新业务亏损、扩张不确定性
-  5. 宏观风险：经济周期、行业周期影响
-  6. 治理结构：股权结构、关联交易、股东回报政策
-  7. 长期确定性：10年后公司会怎样？什么可能颠覆其商业模式？
-  8. 要求搜索最新监管动态、管理层言论等
+| # | 任务 | 负责角色 | 核心问题 |
+|---|------|---------|----------|
+| 1 | 商业模式、护城河与用户价值 | business-analyst（段永平） | 这是不是好生意？护城河够宽吗？ |
+| 2 | 财务数据、盈利能力与估值 | financial-analyst（巴菲特） | 赚的是真钱吗？价格够便宜吗？ |
+| 3 | 行业格局与竞争态势 | industry-researcher（芒格） | 竞争格局在怎么变？什么会杀死它？ |
+| 4 | 风险与管理层质量 | risk-assessor（李录） | 管理层值得信任吗？什么可能出错？ |
 
 ### 第四步：启动4个并行Agent
+
+启动前，team-lead 先完成一轮基础取数与验证（股价、市值、总股本、最近一期营收/净利润，按 `skills/financial-data/SKILL.md` 双源验证），将已验证数据嵌入每个 Agent 的 prompt，避免 4 个 Agent 重复取同一数据。
 
 使用 Task 工具同时启动4个Agent（**必须在同一条消息中并行调用**）：
 
@@ -110,37 +71,14 @@ description: 投研团队——用多个并行 Agent 创建真正的投研团队
 - `team_name`: 对应团队名
 - `name`: 对应角色名（business-analyst / financial-analyst / industry-researcher / risk-assessor）
 
-每个Agent的prompt模板：
-
-```
-你是{公司名}投研团队中的"{角色中文名}"，负责从{大师名}投资视角分析{公司名}。
-
-请完成任务 #{任务编号}：{任务subject}
-
-具体要求：
-{任务description的内容}
-
-**研究方法**：
-- 使用 WebSearch 搜索最新公开信息（财报、行业报告、新闻）
-- **财务数据必须来自两个独立来源**，按 `skills/financial-data/SKILL.md` 规范执行（美股：macrotrends+stockanalysis；港股：aastocks+macrotrends；A股：东方财富+巨潮资讯），两源误差>1%须标记
-- 确保数据准确，关键数据标注来源
-- 分析要深入，不流于表面
-
-**输出要求**：
-- 报告要详尽，使用Markdown表格呈现关键数据
-- 每个分析维度要有明确结论和评分
-- 报告末尾要有该维度的总体结论
-
-**完成后**：
-1. 使用 TaskUpdate 将任务 #{任务编号} 标记为 completed
-2. 通过 SendMessage 把完整分析报告发送给 team-lead（type: "message", recipient: "team-lead"）
-```
+每个 Agent 的 prompt 按 [`references/agent-briefs.md`](references/agent-briefs.md)「Agent Prompt 模板」节构建，将对应任务的完整 description 传入。
 
 ### 第五步：接收报告并跟踪进度
 
 - 向用户实时展示进度表（哪些Agent已完成、哪些仍在研究中）
 - 每收到一份报告，更新进度并展示该报告的核心要点（3-5条）
 - 等待全部4份报告到齐
+- **超时协调**：单个 Agent 超过预期时长 2 倍仍未回报 → 发送一次催办（SendMessage 询问进度）；仍无响应 → 以 N-1 份报告降级汇总，并在最终报告开头标注缺失维度（与根 SKILL.md「错误处理」口径一致），同时告知用户
 
 ### 第六步：关闭团队成员
 
@@ -162,7 +100,7 @@ description: 投研团队——用多个并行 Agent 创建真正的投研团队
 综合评分：X / 5
 
 #### 3. 核心数据速览
-关键财务和经营指标表格（近2年对比）
+关键财务和经营指标表格（近2年对比）；另配 3-5 年营收/利润趋势图与收入结构图，按 `references/report-visuals.md` 类型1/类型2（图为辅、表为准）
 
 #### 4. 各维度分析摘要
 每个维度摘取3-5条最重要的发现

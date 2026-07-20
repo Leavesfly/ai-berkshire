@@ -106,8 +106,9 @@ python3 tools/financial_rigor.py verify-valuation \
 
 分析要点：
 - 用一句话定义这门生意的本质
-- 收入结构拆解（图表）
-- 5年盈利能力趋势（图表）
+- 收入结构拆解（配结构图，按 `references/report-visuals.md` 类型2）
+- 5年盈利能力趋势（配趋势图，按 `references/report-visuals.md` 类型1；图为辅、表为准）
+- 有明确同业对标时，关键指标（毛利率/ROE 等）另配对比图（类型5，>2 家时降级为并列对比表）
 - 商业模式画布：一次性销售 vs 订阅/复购？硬件 vs 软件 vs 平台？
 - 生态粘性/客户锁定强度
 - 毛利率水平与同行对比，解释为什么高/低

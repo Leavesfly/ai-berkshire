@@ -31,7 +31,7 @@ from datetime import datetime, timedelta
 # 配置
 # ============================================================
 
-DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "data")
+DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
 FUND_FILE = os.path.join(DATA_DIR, "fundamentals.json")
 WATCHLIST_FILE = os.path.join(DATA_DIR, "watchlist.json")
 

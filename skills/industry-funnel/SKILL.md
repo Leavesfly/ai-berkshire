@@ -84,6 +84,14 @@ description: 行业漏斗筛选——对一个行业/方向执行漏斗式价值
 
 对第一步的 30-60 家公司，逐家应用 5 条硬指标。
 
+> **A 股标的优先走程序化取数**（更快、更准，降低幻觉风险）：
+> ```bash
+> python3 tools/ashare_data.py search {公司名}       # 确认代码
+> python3 tools/ashare_data.py financials {代码}     # 近5年营收/净利/EPS/ROE
+> python3 tools/ashare_data.py quote {代码}          # 实时价格/PE/PB/市值
+> ```
+> 工具取数后仍需按 `skills/financial-data/SKILL.md` 规范用东方财富/巨潮作第二来源交叉验证；工具失败则回退 WebSearch。港股/美股行情可用 `quote hk00700` / `quote usAAPL`，财务数据按该规范走网页双源。
+
 ### 2.1 5 条硬指标
 
 | # | 指标 | 通过标准 | 放宽条件 | 数据来源 |
@@ -302,9 +310,9 @@ python3 tools/report_audit.py verdict \
 
 ## 后续动作
 
-漏斗终选 3 家后，对每家可单独执行：
-- `/investment-team` —— 完整四大师并行深度研究（独立子目录 + 5 文档）
-- `/investment-checklist` —— 巴菲特买入前 checklist 系统过一遍
-- `/management-deep-dive` —— 管理层纵深研究
+漏斗终选 3 家后，对每家可单独执行（均位于 `skills/<名称>/SKILL.md`）：
+- `investment-team` —— 完整四大师并行深度研究（独立子目录 + 5 文档）
+- `investment-checklist` —— 巴菲特买入前 checklist 系统过一遍
+- `management-deep-dive` —— 管理层纵深研究
 
 `industry-funnel` 是入口，后续 skill 是深挖。

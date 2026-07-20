@@ -1,0 +1,43 @@
+[project]
+name = "ai-berkshire"
+version = "1.2.0"
+description = "AI Berkshire 价值投资研究技能系统 — Python 工具链依赖声明"
+requires-python = ">=3.8"
+
+# 核心依赖：数据获取工具 (tools/ashare_data.py) 使用
+dependencies = [
+    "akshare>=1.14.0",
+    "yfinance>=0.2.40",
+    "tickflow>=0.1.0",
+]
+
+[project.optional-dependencies]
+# 图表生成 (tools/chart_gen.py)
+viz = [
+    "matplotlib>=3.7.0",
+]
+# 雪球爬虫 (tools/xueqiu_scraper.py)
+scraper = [
+    "playwright>=1.40.0",
+]
+# 财报 PDF 解析 (tools/filings_parse.py，A股/港股年报；美股 HTML 零依赖)
+filings = [
+    "pypdf>=3.0",
+]
+# 工具层冒烟测试 (tests/)
+dev = [
+    "pytest>=7.0",
+]
+# 一键安装全部
+all = [
+    "akshare>=1.14.0",
+    "yfinance>=0.2.40",
+    "tickflow>=0.1.0",
+    "matplotlib>=3.7.0",
+    "playwright>=1.40.0",
+    "pypdf>=3.0",
+]
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"

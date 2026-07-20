@@ -18,7 +18,7 @@ description: 深度公司系列——为一家公司撰写 8 篇公众号/视频
 - 每篇独立成文（适合单篇分享），但贯穿一套估值/管理层/价格判断
 - 写给"愿意花 90 分钟读懂一家公司"的读者，不是写给券商客户
 
-**不适合用本 skill 的场景**：单篇研报、季报点评、行业研究——那些用 `/investment-research`、`/earnings-review`、`/industry-research`。
+**不适合用本 skill 的场景**：单篇研报、季报点评、行业研究——那些用 `investment-research`、`earnings-review`、`industry-research`（均位于 `skills/<名称>/SKILL.md`）。
 
 ---
 
@@ -106,7 +106,7 @@ description: 深度公司系列——为一家公司撰写 8 篇公众号/视频
 
 1. 阅读公司近 5 年年报、最新季报
 2. 阅读至少 3 份独立卖方研报（找共识 + 反共识）
-3. 用 `/investment-team` 或 `/investment-research` 先生成内部研究底稿
+3. 用 `investment-team` 或 `investment-research`（`skills/<名称>/SKILL.md`）先生成内部研究底稿
 4. 与用户确认 8 篇的核心论点（避免写完才发现方向不对）
 
 ### 阶段 2：写作（按 01→08 顺序写，不跳）
