@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 雪球通用爬虫：遍历指定用户的完整时间线，按关键词筛选本人原发言。
 
@@ -34,9 +33,11 @@ import json
 import os
 import random
 import re
+import sys
 from datetime import datetime
 from pathlib import Path
-from playwright.async_api import async_playwright
+
+# playwright 为可选依赖，延迟到实际运行时导入（缺失时友好提示而非 ImportError 崩溃）
 
 
 def is_match(text, keywords):
@@ -336,7 +337,7 @@ def format_md(collected, user_id, keywords):
         f"> **整理时间**：{datetime.now().strftime('%Y-%m-%d')}",
         f"> **收录条数**：{len(posts)} 条",
         f"> **关键词筛选**：{', '.join(keywords)}",
-        f"> **采集方式**：Playwright 登录态 + user_timeline.json 全量遍历（仅本人原发言）",
+        "> **采集方式**：Playwright 登录态 + user_timeline.json 全量遍历（仅本人原发言）",
         "",
         "---",
         "",
@@ -411,6 +412,14 @@ async def main():
     print("=" * 60)
     print(f"雪球爬虫 | user_id={args.user_id} | keywords={keywords} | dump_all={args.dump_all}")
     print("=" * 60)
+
+    # 延迟导入 playwright（缺失时友好提示）
+    try:
+        from playwright.async_api import async_playwright
+    except ImportError:
+        print("❌ playwright 未安装。本工具需要 playwright 才能运行。", file=sys.stderr)
+        print("   安装：pip install playwright && playwright install chromium", file=sys.stderr)
+        sys.exit(1)
 
     async with async_playwright() as pw:
         session = await load_with_state(pw, args.state_path, args.user_id)

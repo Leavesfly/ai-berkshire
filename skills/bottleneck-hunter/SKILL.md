@@ -1,6 +1,10 @@
 ---
 name: bottleneck-hunter
 description: 供应链瓶颈猎手——从物理供应链的咽喉环节出发挖掘投资机会，专找第二/第三层被忽视的卡脖子环节，而非已被充分定价的龙头。当用户想分析某个超级趋势（AI 基础设施、能源转型、半导体、国防、太空经济等）的供应链瓶颈、寻找产业链缺口套利标的、或做卡脖子环节扫描时使用。
+type: executable
+confirm_level: heavy
+tools_required: [ashare_data.py, financial_rigor.py, report_audit.py]
+depends_on: [financial-data]
 ---
 
 # 供应链瓶颈猎手：AI驱动的全球产业链瓶颈套利

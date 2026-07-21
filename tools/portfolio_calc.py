@@ -26,15 +26,9 @@
 import argparse
 import json
 import math
-import os
 import sys
 
-EXIT_OK = 0
-EXIT_FAIL = 1
-EXIT_BAD_ARGS = 2
-
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import ashare_data  # noqa: E402
+from utils import EXIT_BAD_ARGS, EXIT_OK
 
 
 def _pearson(xs, ys):
@@ -63,8 +57,9 @@ def analyze_concentration(holdings):
     print("─" * 66)
     print("1. 集中度分析")
     print("─" * 66)
-    stocks = sorted([h for h in holdings if h["code"].lower() != "cash"],
-                    key=lambda h: -h["weight"])
+    stocks = sorted(
+        [h for h in holdings if h["code"].lower() != "cash"], key=lambda h: -h["weight"]
+    )
     cash_w = sum(h["weight"] for h in holdings if h["code"].lower() == "cash")
     total_w = sum(h["weight"] for h in holdings)
     if abs(total_w - 1) > 0.02:
@@ -74,11 +69,15 @@ def analyze_concentration(holdings):
     top3 = sum(h["weight"] for h in stocks[:3])
 
     rows = [
-        ("第一大持仓占比", f"{top1*100:.1f}%" + (f"（{stocks[0]['name']}）" if stocks else ""),
-         "<40%", top1 < 0.40),
-        ("前三大持仓占比", f"{top3*100:.1f}%", "50-80%", 0.50 <= top3 <= 0.80),
+        (
+            "第一大持仓占比",
+            f"{top1 * 100:.1f}%" + (f"（{stocks[0]['name']}）" if stocks else ""),
+            "<40%",
+            top1 < 0.40,
+        ),
+        ("前三大持仓占比", f"{top3 * 100:.1f}%", "50-80%", 0.50 <= top3 <= 0.80),
         ("持仓数量（非现金）", str(len(stocks)), "5-15只", 5 <= len(stocks) <= 15),
-        ("现金占比", f"{cash_w*100:.1f}%", "10-30%（视市场环境）", 0.10 <= cash_w <= 0.30),
+        ("现金占比", f"{cash_w * 100:.1f}%", "10-30%（视市场环境）", 0.10 <= cash_w <= 0.30),
     ]
     for name, val, ref, ok in rows:
         print(f"  {'✅' if ok else '⚠️'} {name:16s} {val:24s} 建议 {ref}")
@@ -87,6 +86,8 @@ def analyze_concentration(holdings):
 
 
 def analyze_correlation(holdings, days):
+    import ashare_data  # 延迟导入：仅相关性分析需要网络取数
+
     print()
     print("─" * 66)
     print(f"2. 相关性矩阵（近 {days} 个交易日日收益率，Pearson）")
@@ -126,8 +127,11 @@ def analyze_correlation(holdings, days):
                 row += f"{'1.00':>{col_w}}"
                 continue
             common = sorted(set(returns[a]) & set(returns[b]))
-            corr = _pearson([returns[a][d] for d in common],
-                            [returns[b][d] for d in common]) if len(common) > 20 else None
+            corr = (
+                _pearson([returns[a][d] for d in common], [returns[b][d] for d in common])
+                if len(common) > 20
+                else None
+            )
             cell = f"{corr:.2f}" if corr is not None else "-"
             row += f"{cell:>{col_w}}"
             if corr is not None and j > i and corr >= 0.7:
@@ -146,13 +150,15 @@ def analyze_correlation(holdings, days):
 def analyze_expected_return(holdings, risk_free):
     print()
     print("─" * 66)
-    print(f"3. 加权预期回报（无风险利率 {risk_free*100:.1f}% 对照）")
+    print(f"3. 加权预期回报（无风险利率 {risk_free * 100:.1f}% 对照）")
     print("─" * 66)
     known = [h for h in holdings if isinstance(h.get("expected_return"), (int, float))]
     missing = [h["name"] for h in holdings if h not in known]
 
     if not known:
-        print("  （所有持仓均未提供 expected_return，跳过——预期回报应来自 three-scenario/reverse-dcf 推演）")
+        print(
+            "  （所有持仓均未提供 expected_return，跳过——预期回报应来自 three-scenario/reverse-dcf 推演）"
+        )
         return
     print(f"  {'标的':10s} {'占比':>8s} {'预期年化':>10s} {'贡献':>8s}  对照")
     print("  " + "-" * 52)
@@ -166,18 +172,20 @@ def analyze_expected_return(holdings, risk_free):
             flag = "✅"
         else:
             flag = "❌ 不高于无风险利率，检视是否换成现金"
-        print(f"  {h['name']:10s} {w*100:>7.1f}% {er*100:>9.1f}% {er*w*100:>7.2f}%  {flag}")
+        print(f"  {h['name']:10s} {w * 100:>7.1f}% {er * 100:>9.1f}% {er * w * 100:>7.2f}%  {flag}")
     covered = sum(h["weight"] for h in known)
     print()
-    print(f"  → 加权预期回报: {weighted*100:.2f}%/年（覆盖 {covered*100:.0f}% 仓位）")
+    print(f"  → 加权预期回报: {weighted * 100:.2f}%/年（覆盖 {covered * 100:.0f}% 仓位）")
     if missing:
         print(f"  ⚠️ 未提供预期回报: {', '.join(missing)}——需先用 three-scenario 推演后重算")
     if covered > 0 and weighted / covered < risk_free:
-        print(f"  ❌ 覆盖仓位的加权回报低于无风险利率 {risk_free*100:.1f}%，组合结构需要检视")
+        print(f"  ❌ 覆盖仓位的加权回报低于无风险利率 {risk_free * 100:.1f}%，组合结构需要检视")
 
 
 def analyze_drawdown(holdings, days):
     """历史回撤模拟：用当前权重回测近 N 日组合净值，输出最大回撤与年化波动。"""
+    import ashare_data  # 延迟导入：仅回撤模拟需要网络取数
+
     print()
     print("─" * 66)
     print(f"4. 历史回撤模拟（当前权重 × 近 {days} 日日收益，现金计 0 收益）")
@@ -214,11 +222,13 @@ def analyze_drawdown(holdings, days):
             max_dd, dd_date = dd, d
     n = len(daily)
     mean = sum(daily) / n
-    vol = (sum((x - mean) ** 2 for x in daily) / (n - 1)) ** 0.5 * (250 ** 0.5) if n > 1 else 0
+    vol = (sum((x - mean) ** 2 for x in daily) / (n - 1)) ** 0.5 * (250**0.5) if n > 1 else 0
 
-    print(f"  区间组合收益:   {(nav-1)*100:+.1f}%（{all_dates[0]} ~ {all_dates[-1]}，股票仓 {sum(w for _r, w in returns.values())*100:.0f}% + 现金 {cash_w*100:.0f}%）")
-    print(f"  最大回撤:       {max_dd*100:.1f}%（低点 {dd_date}）")
-    print(f"  年化波动率:     {vol*100:.1f}%")
+    print(
+        f"  区间组合收益:   {(nav - 1) * 100:+.1f}%（{all_dates[0]} ~ {all_dates[-1]}，股票仓 {sum(w for _r, w in returns.values()) * 100:.0f}% + 现金 {cash_w * 100:.0f}%）"
+    )
+    print(f"  最大回撤:       {max_dd * 100:.1f}%（低点 {dd_date}）")
+    print(f"  年化波动率:     {vol * 100:.1f}%")
     if abs(max_dd) > 0.30:
         print("  ⚠️ 历史最大回撤超 30%：自问能否扛住同等跌幅不割肉；扛不住就降集中度或加现金")
     print("  提示: 回撤是历史重演非预测；价值投资者真正的风险是永久性损失，不是波动本身")
@@ -227,14 +237,19 @@ def analyze_drawdown(holdings, days):
 def main():
     parser = argparse.ArgumentParser(
         description="组合层计算 — 集中度/相关性/加权预期回报",
-        formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--holdings", required=True,
-                        help='JSON数组: [{"name","code","weight","expected_return"?},...]，现金 code="cash"')
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "--holdings",
+        required=True,
+        help='JSON数组: [{"name","code","weight","expected_return"?},...]，现金 code="cash"',
+    )
     parser.add_argument("--days", type=int, default=250, help="相关性计算窗口（默认250交易日）")
     parser.add_argument("--risk-free", type=float, default=0.04, help="无风险利率（默认0.04）")
     parser.add_argument("--no-corr", action="store_true", help="跳过相关性取数（离线模式）")
-    parser.add_argument("--drawdown", action="store_true",
-                        help="额外输出历史回撤模拟（需网络取日K）")
+    parser.add_argument(
+        "--drawdown", action="store_true", help="额外输出历史回撤模拟（需网络取日K）"
+    )
     args = parser.parse_args()
 
     try:
@@ -244,7 +259,7 @@ def main():
             assert "name" in h and "code" in h and isinstance(h.get("weight"), (int, float))
     except (json.JSONDecodeError, AssertionError):
         print('❌ --holdings 格式错误。示例: [{"name":"腾讯","code":"hk00700","weight":0.3}]')
-        print("   weight 为小数占比；现金用 code=\"cash\"")
+        print('   weight 为小数占比；现金用 code="cash"')
         sys.exit(EXIT_BAD_ARGS)
 
     print("=" * 66)

@@ -1,6 +1,10 @@
 ---
 name: exit-review
 description: 卖出决策审查——按段永平"卖出三理由"框架系统化评估是否应该卖出/减仓一只持仓，含机会成本对比与分批退出纪律。当用户想决定要不要卖、何时卖、卖多少，或红线触发后需要退出方案时使用。
+type: executable
+confirm_level: medium
+tools_required: [financial_rigor.py, ashare_data.py]
+depends_on: [financial-data, thesis-tracker]
 ---
 
 # 卖出决策审查：比买入更难的那一半

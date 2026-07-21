@@ -1,6 +1,10 @@
 ---
 name: track-record
 description: 决策复盘——回看历史研究结论的准确率，检验判断质量并提炼教训。当用户想知道"之前的判断对了吗"、"复盘一下历史决策"、"我们的胜率如何"、查看决策记录时使用。
+type: executable
+confirm_level: light
+tools_required: [decision_log.py, ashare_data.py]
+depends_on: []
 ---
 
 # 决策复盘：检验历史判断，让系统越用越聪明

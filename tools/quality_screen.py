@@ -21,26 +21,11 @@
 
 import argparse
 import json
-import os
 import sys
 
-EXIT_OK = 0
-EXIT_FAIL = 1
-EXIT_BAD_ARGS = 2
-
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import ashare_data  # noqa: E402  复用取数/缓存/市场识别
-
-# (编号, 名称, 排除条件描述)
-_RULES = [
-    ("1", "平均ROE", "< 8%"),
-    ("2", "5年累计FCF", "为负"),
-    ("3", "利息覆盖倍数", "< 2倍"),
-    ("4", "毛利率", "< 15%"),
-    ("5", "OCF/净利润", "< 0.7"),
-    ("6", "净利率", "< 5%"),
-    ("7", "股本膨胀", "> 20%"),
-]
+from core.metrics import RULES as _RULES  # noqa: F401 — 保持外部可访问
+from core.metrics import grade_indicators as _grade_core
+from utils import EXIT_FAIL, EXIT_OK
 
 
 def _avg(values):
@@ -52,8 +37,11 @@ def _avg(values):
 # A股指标提取（基于 ashare_data 财务摘要，近5年）
 # ---------------------------------------------------------------------------
 
+
 def _metrics_a(code: str) -> dict:
     """从 A 股财务摘要计算可得指标；FCF/利息覆盖无原始数据，标记人工补充。"""
+    import ashare_data  # 延迟导入：仅取数时需要
+
     code_clean = ashare_data._normalize_code(code)
     if ashare_data._HAS_AKSHARE:
         try:
@@ -70,11 +58,13 @@ def _metrics_a(code: str) -> dict:
     nm_avg = _avg([r.get("net_margin") for r in reports])
 
     # OCF/NI：用每股口径近似（每股经营现金流 / EPS），无需总股本
-    ocf_ni = _avg([
-        r["ocf_per_share"] / r["eps"]
-        for r in reports
-        if r.get("ocf_per_share") is not None and r.get("eps") not in (None, 0)
-    ])
+    ocf_ni = _avg(
+        [
+            r["ocf_per_share"] / r["eps"]
+            for r in reports
+            if r.get("ocf_per_share") is not None and r.get("eps") not in (None, 0)
+        ]
+    )
 
     # 股本膨胀：用 净利润/EPS 估算各年股本（近似值，标注 [估计]）
     dilution = None
@@ -89,8 +79,8 @@ def _metrics_a(code: str) -> dict:
     return {
         "years": len(reports),
         "roe_avg": roe_avg,
-        "fcf_5y": None,           # 摘要无 capex，需人工补充
-        "interest_cover": None,   # 摘要无利息支出，需人工补充
+        "fcf_5y": None,  # 摘要无 capex，需人工补充
+        "interest_cover": None,  # 摘要无利息支出，需人工补充
         "gross_margin": gm_avg,
         "ocf_ni": ocf_ni,
         "net_margin": nm_avg,
@@ -104,6 +94,7 @@ def _metrics_a(code: str) -> dict:
 # 港股/美股指标提取（yfinance 三表，近4-5个财年）
 # ---------------------------------------------------------------------------
 
+
 def _yf_row(df, names, col):
     """按候选行名取值（不同公司行名有差异），无则 None。"""
     for name in names:
@@ -115,7 +106,9 @@ def _yf_row(df, names, col):
 
 
 def _metrics_yf(code: str) -> dict:
+    import ashare_data  # 延迟导入：仅取数时需要
     import yfinance as yf
+
     t = yf.Ticker(ashare_data._yf_ticker(code))
     inc, cf, bs = t.income_stmt, t.cashflow, t.balance_sheet
     if inc is None or inc.empty:
@@ -178,40 +171,13 @@ def _metrics_yf(code: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# 打分
+# 打分（委托 core.metrics，保持原有 _grade 接口兼容）
 # ---------------------------------------------------------------------------
+
 
 def _grade(m: dict) -> list:
     """返回 [(编号, 名称, 状态, 说明)]；状态: pass/fail/edge/na。"""
-    out = []
-
-    def _judge(no, name, value, fail_cond, edge_cond, fmt):
-        if value is None:
-            out.append((no, name, "na", "需人工补充（工具无原始数据）"))
-        elif fail_cond(value):
-            out.append((no, name, "fail", fmt(value)))
-        elif edge_cond(value):
-            out.append((no, name, "edge", fmt(value) + "（边界，需复核）"))
-        else:
-            out.append((no, name, "pass", fmt(value)))
-
-    _judge("1", "平均ROE", m["roe_avg"],
-           lambda v: v < 8, lambda v: v < 10, lambda v: f"{v:.1f}%")
-    _judge("2", "5年累计FCF", m["fcf_5y"],
-           lambda v: v < 0, lambda v: False,
-           lambda v: ashare_data._fmt_num(v))
-    _judge("3", "利息覆盖倍数", m["interest_cover"],
-           lambda v: v < 2, lambda v: v < 3, lambda v: f"{v:.1f}x")
-    _judge("4", "毛利率", m["gross_margin"],
-           lambda v: v < 15, lambda v: v < 18, lambda v: f"{v:.1f}%")
-    _judge("5", "OCF/净利润", m["ocf_ni"],
-           lambda v: v < 0.7, lambda v: v < 0.8, lambda v: f"{v:.2f}")
-    _judge("6", "净利率", m["net_margin"],
-           lambda v: v < 5, lambda v: v < 6, lambda v: f"{v:.1f}%")
-    _judge("7", "股本膨胀", m["dilution_pct"],
-           lambda v: v > 20, lambda v: v > 15,
-           lambda v: f"{v:+.1f}%" + (f" {m['dilution_note']}" if m.get("dilution_note") else ""))
-    return out
+    return _grade_core(m)
 
 
 _STATUS_ICON = {"pass": "✅", "fail": "❌", "edge": "⚠️", "na": "❓"}
@@ -219,27 +185,37 @@ _STATUS_ICON = {"pass": "✅", "fail": "❌", "edge": "⚠️", "na": "❓"}
 
 def screen_one(code: str) -> dict:
     """单标的筛选，返回结构化结果。"""
+    import ashare_data  # 延迟导入：仅市场检测需要
+
     mkt = ashare_data._detect_market_type(code)
     metrics = _metrics_a(code) if mkt == "A" else _metrics_yf(code)
     grades = _grade(metrics)
     fails = [g for g in grades if g[2] == "fail"]
     nas = [g for g in grades if g[2] == "na"]
     if fails:
-        verdict = "排除（触犯硬指标，豁免规则见 quality-screen SKILL.md 第%s条）" % \
+        verdict = "排除（触犯硬指标，豁免规则见 quality-screen SKILL.md 第{}条）".format(
             "/".join(g[0] for g in fails)
+        )
     elif nas:
-        verdict = "初步通过（%d 项需人工补充后终判）" % len(nas)
+        verdict = f"初步通过（{len(nas)} 项需人工补充后终判）"
     else:
         verdict = "通过硬指标初筛"
-    return {"code": code, "market": mkt, "metrics": metrics,
-            "grades": grades, "verdict": verdict,
-            "fail_rules": [g[0] for g in fails], "na_rules": [g[0] for g in nas]}
+    return {
+        "code": code,
+        "market": mkt,
+        "metrics": metrics,
+        "grades": grades,
+        "verdict": verdict,
+        "fail_rules": [g[0] for g in fails],
+        "na_rules": [g[0] for g in nas],
+    }
 
 
 def main():
     parser = argparse.ArgumentParser(
         description="去劣筛选硬指标程序化 — 7条指标自动取数打分",
-        formatter_class=argparse.RawDescriptionHelpFormatter)
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     parser.add_argument("codes", nargs="+", help="股票代码，如 600519 hk00700 usAAPL")
     parser.add_argument("--json", action="store_true", help="输出JSON（供批量汇总）")
     args = parser.parse_args()
@@ -252,9 +228,13 @@ def main():
             errors.append((code, str(e)))
 
     if args.json:
-        print(json.dumps({"results": results,
-                          "errors": [{"code": c, "error": e} for c, e in errors]},
-                         ensure_ascii=False, default=str))
+        print(
+            json.dumps(
+                {"results": results, "errors": [{"code": c, "error": e} for c, e in errors]},
+                ensure_ascii=False,
+                default=str,
+            )
+        )
         sys.exit(EXIT_OK if results else EXIT_FAIL)
 
     for r in results:
@@ -268,7 +248,9 @@ def main():
         if m["years"] < 5:
             print(f"  ⚠️ 数据窗口仅 {m['years']} 年（标准要求5-10年），结论标注「数据窗口不足」")
         if r["market"] == "A" and r["na_rules"]:
-            print("  提示: A股 FCF/利息覆盖需从年报现金流量表与利润表人工补充（可用 filings_fetch.py 取年报）")
+            print(
+                "  提示: A股 FCF/利息覆盖需从年报现金流量表与利润表人工补充（可用 filings_fetch.py 取年报）"
+            )
         print("  提示: 触犯指标的公司先查豁免规则（豁免A/B/C），银行保险不适用第3条")
         print()
 

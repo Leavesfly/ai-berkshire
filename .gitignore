@@ -6,10 +6,14 @@ __pycache__/
 .codex/
 /tmp/
 logs/
-reports/美团/command-log.jsonl
+.pytest_cache/
+.ruff_cache/
 
 # 数据取数本地缓存（ashare_data.py 自动维护，可随时删除重建）
 data/cache/
+
+# 实验性脚本的本地测试数据
+tools/experimental/data/
 
 # 下载的财报原文（filings_fetch.py 自动维护，体积大且可随时重新下载）
 data/filings/
@@ -17,9 +21,6 @@ data/filings/
 # 私人投资数据只存本地，不公开（与 portfolio-latest.md 同口径）
 data/decisions.jsonl
 data/watchlist.json
-
-# 雪球爬虫登录态缓存（含 cookies，本地使用）
-/tmp/xueqiu_state.json
 
 # ===== 音视频大文件不入库 =====
 # 如确需提交某个文件，用 git add -f 显式加入
@@ -34,5 +35,7 @@ data/watchlist.json
 
 # 组合报告只存本地，不公开
 reports/portfolio-latest.md
-
 # 实盘记录/ 公开权重口径版；原始账本（含股数/金额）在 local/实盘记录-原始/（已被 /local/ 规则覆盖）
+
+# macOS launchd 配置属个人本地偏好
+data/*.plist

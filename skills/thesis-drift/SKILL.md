@@ -1,6 +1,10 @@
 ---
 name: thesis-drift
 description: 投资论文漂移检测——区分投资论文的“事实变化”与“措辞变化”，识别自我合理化。当用户想检查自己的投资逻辑是否发生实质漂移、辨别论文变化是真实基本面变化还是文字包装时使用。
+type: executable
+confirm_level: light
+tools_required: [financial_rigor.py, filings_parse.py]
+depends_on: [thesis-tracker]
 ---
 
 # 投资论文漂移检测：分清事实变化与措辞变化

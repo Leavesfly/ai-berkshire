@@ -2,7 +2,7 @@
 name = "ai-berkshire"
 version = "1.2.0"
 description = "AI Berkshire 价值投资研究技能系统 — Python 工具链依赖声明"
-requires-python = ">=3.8"
+requires-python = ">=3.9"
 
 # 核心依赖：数据获取工具 (tools/ashare_data.py) 使用
 dependencies = [
@@ -16,28 +16,49 @@ dependencies = [
 viz = [
     "matplotlib>=3.7.0",
 ]
-# 雪球爬虫 (tools/xueqiu_scraper.py)
-scraper = [
-    "playwright>=1.40.0",
-]
 # 财报 PDF 解析 (tools/filings_parse.py，A股/港股年报；美股 HTML 零依赖)
 filings = [
     "pypdf>=3.0",
 ]
-# 工具层冒烟测试 (tests/)
+# 工具层冒烟测试 (tests/) + 本地 lint
 dev = [
     "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "ruff>=0.4.0",
 ]
-# 一键安装全部
+# 一键安装全部可选依赖（核心依赖已自动安装，此处仅列 optional）
 all = [
-    "akshare>=1.14.0",
-    "yfinance>=0.2.40",
-    "tickflow>=0.1.0",
     "matplotlib>=3.7.0",
-    "playwright>=1.40.0",
     "pypdf>=3.0",
 ]
 
 [build-system]
 requires = ["setuptools>=68.0"]
 build-backend = "setuptools.build_meta"
+
+# ---------------------------------------------------------------------------
+# 开发工具配置
+# ---------------------------------------------------------------------------
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "W",   # pycodestyle warnings
+    "I",   # isort（import 排序）
+    "UP",  # pyupgrade（语法现代化）
+]
+ignore = [
+    "E501",  # 行长度由 line-length 控制，不重复报错
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["tools"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["tools", "tools/core"]

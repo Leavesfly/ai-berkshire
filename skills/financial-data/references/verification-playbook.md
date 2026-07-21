@@ -103,6 +103,78 @@ python3 tools/financial_rigor.py reverse-dcf \
 - 输出“当前价格隐含未来 N 年 FCF 年均增速 X%”，用于四大师“市场预期是否苛刻”判断；隐含增长 >100%/年时退出码 1（极端预期警告）。
 - FCF 为负的公司不适用（退出码 2），改用 three-scenario 情景分析；贴现率/永续增长假设须在报告中明示。
 
+### 10. 估值分位（当前 PE/PB 处于历史序列的百分位）
+
+```bash
+python3 tools/financial_rigor.py valuation-percentile \
+  --metric PE --current 22 --history '[35,42,28,55,38,30,25,45,33,27]'
+```
+- `--history` 为 JSON 数组，建议 ≥5 个值覆盖完整估值周期（如近 5-10 年年度 PE）。
+- 输出当前值在历史序列中的百分位（如“处于历史 30% 分位”），用于判断相对自身贵不贵。
+- 样本 <5 个时退出码 2（数据不足，无法得出有意义的分位）。
+
+### 11. 同业对标（目标公司 vs 可比公司估值溢价/折价）
+
+```bash
+python3 tools/financial_rigor.py peer-compare \
+  --target '{"name":"腾讯","PE":18,"PB":3.4,"ROE":22}' \
+  --peers '[{"name":"阿里","PE":12,"PB":1.8},{"name":"Meta","PE":24,"PB":7.5}]'
+```
+- `--target` 与 `--peers` 均为 JSON，字段名自定义（如 PE/PB/ROE/PS 等），工具自动计算同业中位数与溢价/折价率。
+- 建议 3-5 家可比公司；指标不一致时只对比共有字段。
+
+### 12. DCF 敏感性矩阵（增长率×贴现率二维内在价值）
+
+```bash
+python3 tools/financial_rigor.py dcf-matrix \
+  --fcf 1600 --growth 0.05,0.10,0.15 --discount 0.08,0.10,0.12 \
+  --terminal-growth 0.025 --market-cap 28000
+```
+- `--growth`/`--discount` 为逗号分隔的小数列表；`--market-cap` 可选，传入后额外输出当前市值相对各情景的溢价/折价。
+- 贴现率必须大于永续增长率，否则退出码 2。
+- 报告须注明基准情景（通常取中性增长+中性贴现）。
+
+### 13. Beneish M-Score 盈余操纵初筛（需连续两年数据）
+
+```bash
+python3 tools/financial_rigor.py m-score \
+  --current '{"revenue":6603,"receivables":800,"cogs":3100,"current_assets":5000,"ppe":4000,"total_assets":16000,"depreciation":380,"sga":600,"current_liabilities":3000,"long_term_debt":2000,"net_income":1941,"cfo":2200}' \
+  --prior '{"revenue":6090,"receivables":750,"cogs":2900,"current_assets":4800,"ppe":3800,"total_assets":15000,"depreciation":350,"sga":550,"current_liabilities":2800,"long_term_debt":1800,"net_income":1750,"cfo":2000}'
+```
+- 需 12 个财务字段（两年同口径）；缺少字段时退出码 2 并提示缺少哪些。
+- M-Score > -1.78 提示盈余操纵风险（退出码 1）；金融股不适用。
+- 仅为概率初筛非定罪工具，高风险结果须回到报表科目逐项核查。
+
+### 14. Altman Z-Score 财务困境风险
+
+```bash
+python3 tools/financial_rigor.py altman-z \
+  --working-capital 3000 --retained-earnings 8000 --ebit 2300 \
+  --equity-value 28000 --total-liabilities 6000 --total-assets 16000 \
+  --revenue 6603 --model em
+```
+- `--model em`（默认）为新兴市场 Z'' 模型，适用 A股/港股/非制造业；`--model public` 为经典上市制造业模型（需 `--revenue`）。
+- Z'' < 1.1 为困境区（退出码 1）；1.1-2.6 为灰色区；>2.6 为安全区。
+
+### 15. 应计质量（Sloan 应计比率 + 利润含金量）
+
+```bash
+python3 tools/financial_rigor.py accruals \
+  --net-income 1941 --cfo 2200 --total-assets 16000
+```
+- 应计比率 = (净利润 - 经营现金流) / 总资产；>10% 提示利润含金量存疑（退出码 1）。
+- 同时输出 OCF/净利润 比值：<0.7 提示关注。
+
+### 16. 凯利公式仓位参考（胜率/盈亏比→建议仓位上限）
+
+```bash
+python3 tools/financial_rigor.py kelly \
+  --win-prob 0.6 --win 0.5 --loss 0.3 --cap 0.25
+```
+- `--win-prob`/`--win`/`--loss` 必须来自 `three-scenario` 推演，不得拍脑袋。
+- `--cap` 为单一持仓上限（默认 0.25），凯利建议仓位不超过此值。
+- 期望收益为负时退出码 1（不建议建仓）。
+
 ---
 
 ## report_audit.py 抽检准出三步（推荐文件化闭环）

@@ -30,9 +30,7 @@ import subprocess
 import sys
 from datetime import datetime
 
-EXIT_OK = 0
-EXIT_FAIL = 1
-EXIT_BAD_ARGS = 2
+from utils import EXIT_BAD_ARGS, EXIT_OK
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _WL_PATH = os.path.join(_ROOT, "data", "watchlist.json")
@@ -49,8 +47,12 @@ def _load() -> list:
 def _save(items: list):
     os.makedirs(os.path.dirname(_WL_PATH), exist_ok=True)
     with open(_WL_PATH, "w", encoding="utf-8") as f:
-        json.dump({"updated": datetime.now().strftime("%Y-%m-%d %H:%M"),
-                   "items": items}, f, ensure_ascii=False, indent=2)
+        json.dump(
+            {"updated": datetime.now().strftime("%Y-%m-%d %H:%M"), "items": items},
+            f,
+            ensure_ascii=False,
+            indent=2,
+        )
 
 
 def cmd_add(args):
@@ -58,21 +60,31 @@ def cmd_add(args):
     for it in items:
         if it["code"] == args.code:
             # 已存在则更新（区间/备注可随论文演进调整）
-            it.update({k: v for k, v in {
-                "name": args.name, "buy_below": args.buy_below,
-                "sell_above": args.sell_above, "note": args.note,
-            }.items() if v is not None})
+            it.update(
+                {
+                    k: v
+                    for k, v in {
+                        "name": args.name,
+                        "buy_below": args.buy_below,
+                        "sell_above": args.sell_above,
+                        "note": args.note,
+                    }.items()
+                    if v is not None
+                }
+            )
             _save(items)
             print(f"  ✅ 已更新观察标的: {it['name']} ({args.code})")
             return
-    items.append({
-        "code": args.code,
-        "name": args.name or args.code,
-        "buy_below": args.buy_below,
-        "sell_above": args.sell_above,
-        "note": args.note or "",
-        "added": datetime.now().strftime("%Y-%m-%d"),
-    })
+    items.append(
+        {
+            "code": args.code,
+            "name": args.name or args.code,
+            "buy_below": args.buy_below,
+            "sell_above": args.sell_above,
+            "note": args.note or "",
+            "added": datetime.now().strftime("%Y-%m-%d"),
+        }
+    )
     _save(items)
     print(f"  ✅ 已加入观察清单: {args.name or args.code} ({args.code})，共 {len(items)} 个标的")
 
@@ -98,7 +110,9 @@ def cmd_list():
     for it in items:
         buy = f"买入区 ≤{it['buy_below']}" if it.get("buy_below") else "买入区未设"
         sell = f"卖出关注 ≥{it['sell_above']}" if it.get("sell_above") else "卖出线未设"
-        print(f"  {it['name']:10s} {it['code']:10s} {buy:16s} {sell:16s} (加入 {it.get('added', '-')})")
+        print(
+            f"  {it['name']:10s} {it['code']:10s} {buy:16s} {sell:16s} (加入 {it.get('added', '-')})"
+        )
         if it.get("note"):
             print(f"    备注: {it['note']}")
 
@@ -108,7 +122,9 @@ def _notify(text: str) -> bool:
     url = os.environ.get("WATCHLIST_WEBHOOK", "").strip()
     if not url:
         print("  ⚠️ 未配置 WATCHLIST_WEBHOOK 环境变量，跳过推送")
-        print("     配置方法: export WATCHLIST_WEBHOOK='https://oapi.dingtalk.com/robot/send?access_token=...'")
+        print(
+            "     配置方法: export WATCHLIST_WEBHOOK='https://oapi.dingtalk.com/robot/send?access_token=...'"
+        )
         return False
     if "dingtalk" in url:
         payload = {"msgtype": "text", "text": {"content": text}}
@@ -118,10 +134,22 @@ def _notify(text: str) -> bool:
         payload = {"text": text}
     try:
         r = subprocess.run(
-            ["/usr/bin/curl", "-s", "-m", "10", "-X", "POST",
-             "-H", "Content-Type: application/json",
-             "-d", json.dumps(payload, ensure_ascii=False), url],
-            capture_output=True, timeout=15)
+            [
+                "/usr/bin/curl",
+                "-s",
+                "-m",
+                "10",
+                "-X",
+                "POST",
+                "-H",
+                "Content-Type: application/json",
+                "-d",
+                json.dumps(payload, ensure_ascii=False),
+                url,
+            ],
+            capture_output=True,
+            timeout=15,
+        )
         ok = r.returncode == 0
     except (subprocess.TimeoutExpired, OSError):
         ok = False
@@ -135,7 +163,6 @@ def cmd_scan(no_cache=False, notify=False):
         print("  （观察清单为空，无可扫描标的）")
         return
 
-    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     import ashare_data
 
     print("=" * 78)
@@ -174,7 +201,9 @@ def cmd_scan(no_cache=False, notify=False):
 
         cache_tag = " [缓存]" if note else ""
         sig_txt = "；".join(signals) if signals else "— 无信号"
-        print(f"  {it['name']:10s} 现价 {price:>9.2f} ({float(d.get('change_pct') or 0):+.2f}%){cache_tag}  {sig_txt}")
+        print(
+            f"  {it['name']:10s} 现价 {price:>9.2f} ({float(d.get('change_pct') or 0):+.2f}%){cache_tag}  {sig_txt}"
+        )
         if signals:
             triggers.append((it, signals))
 
@@ -185,10 +214,14 @@ def cmd_scan(no_cache=False, notify=False):
             print(f"     {it['name']}: {'；'.join(signals)}")
             if it.get("note"):
                 print(f"       └ 论文备注: {it['note']}")
-        print("  下一步: 买入区标的走 investment-checklist 核对；卖出关注/异动标的走 exit-review / news-pulse")
+        print(
+            "  下一步: 买入区标的走 investment-checklist 核对；卖出关注/异动标的走 exit-review / news-pulse"
+        )
         if notify:
-            lines = [f"【AI Berkshire 观察清单】{datetime.now().strftime('%m-%d %H:%M')} "
-                     f"{len(triggers)} 个标的触发信号"]
+            lines = [
+                f"【AI Berkshire 观察清单】{datetime.now().strftime('%m-%d %H:%M')} "
+                f"{len(triggers)} 个标的触发信号"
+            ]
             for it, signals in triggers:
                 lines.append(f"· {it['name']}({it['code']}): {'；'.join(signals)}")
                 if it.get("note"):
@@ -218,7 +251,7 @@ def cmd_schedule(every: int):
   <key>StandardOutPath</key><string>{log}</string>
   <key>StandardErrorPath</key><string>{log}</string>
   <key>EnvironmentVariables</key>
-  <dict><key>WATCHLIST_WEBHOOK</key><string>{os.environ.get('WATCHLIST_WEBHOOK', '在此填入webhook地址')}</string></dict>
+  <dict><key>WATCHLIST_WEBHOOK</key><string>{os.environ.get("WATCHLIST_WEBHOOK", "在此填入webhook地址")}</string></dict>
 </dict></plist>
 """
     os.makedirs(os.path.dirname(plist_path), exist_ok=True)
@@ -228,22 +261,27 @@ def cmd_schedule(every: int):
     print("=" * 70)
     print(f"定时扫描配置已生成（每 {every} 分钟，仅生成不安装）")
     print("=" * 70)
-    print(f"  macOS (launchd)：")
+    print("  macOS (launchd)：")
     print(f"    cp {plist_path} ~/Library/LaunchAgents/")
-    print(f"    launchctl load ~/Library/LaunchAgents/com.ai-berkshire.watchlist.plist")
-    print(f"    卸载: launchctl unload ~/Library/LaunchAgents/com.ai-berkshire.watchlist.plist")
+    print("    launchctl load ~/Library/LaunchAgents/com.ai-berkshire.watchlist.plist")
+    print("    卸载: launchctl unload ~/Library/LaunchAgents/com.ai-berkshire.watchlist.plist")
     print()
-    print(f"  Linux (crontab -e 添加一行)：")
-    print(f"    */{every if every < 60 else 60} * * * * WATCHLIST_WEBHOOK='<webhook>' {py} {script} scan --notify >> {log} 2>&1")
+    print("  Linux (crontab -e 添加一行)：")
+    print(
+        f"    */{every if every < 60 else 60} * * * * WATCHLIST_WEBHOOK='<webhook>' {py} {script} scan --notify >> {log} 2>&1"
+    )
     print()
     print(f"  扫描日志: {log}")
-    print("  提示: 触发信号只在盘中有意义，可按需限定运行时段；webhook 未配置时扫描仍执行，仅不推送")
+    print(
+        "  提示: 触发信号只在盘中有意义，可按需限定运行时段；webhook 未配置时扫描仍执行，仅不推送"
+    )
 
 
 def main():
     parser = argparse.ArgumentParser(
         description="观察清单监控 — 买卖区间维护与批量信号扫描",
-        formatter_class=argparse.RawDescriptionHelpFormatter)
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     sub = parser.add_subparsers(dest="command")
 
     p_add = sub.add_parser("add", help="添加/更新观察标的")
@@ -260,8 +298,9 @@ def main():
 
     p_scan = sub.add_parser("scan", help="批量扫描触发信号")
     p_scan.add_argument("--no-cache", action="store_true", help="跳过行情缓存强制实时")
-    p_scan.add_argument("--notify", action="store_true",
-                        help="有触发信号时推送 WATCHLIST_WEBHOOK（钉钉/飞书/通用）")
+    p_scan.add_argument(
+        "--notify", action="store_true", help="有触发信号时推送 WATCHLIST_WEBHOOK（钉钉/飞书/通用）"
+    )
 
     p_sch = sub.add_parser("schedule", help="生成定时扫描配置（launchd/cron）")
     p_sch.add_argument("--every", type=int, default=60, help="扫描间隔分钟（默认60）")

@@ -1,6 +1,10 @@
 ---
 name: management-deep-dive
 description: 管理层纵深研究——买股票就是买人，深度评估公司管理层的能力圈、诚信度、资本配置能力与历史决策质量。当用户想深入研究某公司管理层、评估 CEO 能力与诚信、判断管理层是否值得托付时使用。
+type: executable
+confirm_level: medium
+tools_required: [financial_rigor.py, filings_fetch.py, report_audit.py]
+depends_on: [financial-data]
 ---
 
 # 管理层纵深研究：买股票就是买人
@@ -166,19 +170,7 @@ AI无法和管理层面对面交流，但可以通过公开渠道的侧面信息
 
 将报告写入 `reports/{公司名}/{公司名}-management-{YYYYMMDD}.md`（目录不存在先创建，遵循 `CLAUDE.md` 报告路径约定），例如 `reports/美团/美团-management-20260409.md`。
 
-报告写入后执行数据抽检（准出流程），通过方可交付：
-
-```bash
-# Step 1 — 提取抽检清单（15%随机抽样）
-python3 tools/report_audit.py extract --report <报告文件路径>
-
-# Step 2 — 对清单每项从可靠信源取数（参见 skills/financial-data/SKILL.md）
-
-# Step 3 — 输出准出/打回判决
-python3 tools/report_audit.py verdict --results '<填好的JSON>' --report <报告文件名>
-```
-
-**【准出】** 全部通过 → 交付；**【打回】** 有不通过 → 修正后重审。
+报告写入后按 [`references/audit-protocol.md`](../../references/audit-protocol.md) 执行数据抽检（准出流程），通过方可交付。
 
 ---
 

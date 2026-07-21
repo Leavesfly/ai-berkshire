@@ -1,6 +1,10 @@
 ---
 name: wechat-article
 description: 微信公众号文章——作者、编辑、读者三个 Agent 协作，产出一篇可直接发布的公众号深度文章。当用户想把投研内容写成公众号文章、做深度财经内容创作与打磨时使用。
+type: executable
+confirm_level: heavy
+tools_required: [report_audit.py]
+depends_on: [financial-data]
 ---
 
 # 微信公众号文章：作者-编辑-读者三Agent协作

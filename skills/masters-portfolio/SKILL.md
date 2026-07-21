@@ -1,6 +1,10 @@
 ---
 name: masters-portfolio
 description: 大师持仓跟踪——解析伯克希尔（巴菲特）、喜马拉雅资本（李录）等机构的 SEC 13F 季度持仓与变动。当用户问"巴菲特最近买了什么"、"李录持仓"、"伯克希尔调仓"、"看看大师们在买什么"、"某机构13F"时使用。
+type: executable
+confirm_level: light
+tools_required: [masters_portfolio.py]
+depends_on: []
 ---
 
 # 大师持仓跟踪：看聪明钱的方向，不抄聪明钱的作业

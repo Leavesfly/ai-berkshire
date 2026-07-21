@@ -35,9 +35,7 @@ import os
 import re
 import sys
 
-EXIT_OK = 0
-EXIT_FAIL = 1
-EXIT_BAD_ARGS = 2
+from utils import EXIT_BAD_ARGS, EXIT_FAIL, EXIT_OK
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -45,6 +43,7 @@ _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # ---------------------------------------------------------------------------
 # 文件 → 纯文本
 # ---------------------------------------------------------------------------
+
 
 def _html_to_text(raw: str) -> str:
     """HTML/inline-XBRL → 纯文本：去脚本样式、去标签、解实体、归一空白。"""
@@ -68,7 +67,8 @@ def _pdf_to_text(path: str) -> str:
         except ImportError:
             raise ImportError(
                 "PDF 解析需要 pypdf: pip install pypdf（或 pip install .[filings]）\n"
-                "   降级路径：用 pdf 解析能力将 PDF 转为 .txt 后，对 .txt 使用本工具")
+                "   降级路径：用 pdf 解析能力将 PDF 转为 .txt 后，对 .txt 使用本工具"
+            )
     reader = PdfReader(path)
     pages = []
     for page in reader.pages:
@@ -105,12 +105,18 @@ def load_text(path: str) -> str:
 
 # 规范章节名 → (10-K Item 编号, 中文年报标题关键词, 别名)
 _SECTION_MAP = {
-    "risk":     ("1A", ("风险", "可能面对的风险"), ("item1a", "风险", "risk")),
-    "mda":      ("7",  ("经营情况讨论与分析", "管理层讨论与分析", "董事会报告", "管理层讨论"),
-                 ("item7", "讨论", "mda", "md&a")),
-    "business": ("1",  ("公司业务概要", "公司简介和主要财务指标", "业务概要", "主席报告"),
-                 ("item1", "业务", "business")),
-    "legal":    ("3",  ("重要事项", "重大诉讼"), ("item3", "诉讼", "legal")),
+    "risk": ("1A", ("风险", "可能面对的风险"), ("item1a", "风险", "risk")),
+    "mda": (
+        "7",
+        ("经营情况讨论与分析", "管理层讨论与分析", "董事会报告", "管理层讨论"),
+        ("item7", "讨论", "mda", "md&a"),
+    ),
+    "business": (
+        "1",
+        ("公司业务概要", "公司简介和主要财务指标", "业务概要", "主席报告"),
+        ("item1", "业务", "business"),
+    ),
+    "legal": ("3", ("重要事项", "重大诉讼"), ("item3", "诉讼", "legal")),
 }
 
 
@@ -131,11 +137,12 @@ def _find_us_items(text: str) -> list:
         return []
     # 目录页会把所有 Item 密集列一遍——若某编号出现≥2次，丢弃第一次（目录）
     from collections import Counter
+
     counts = Counter(item for _p, item in hits)
     seen, result = set(), []
     for pos, item in hits:
         if counts[item] >= 2 and item not in seen:
-            seen.add(item)      # 第一次出现视为目录条目，跳过
+            seen.add(item)  # 第一次出现视为目录条目，跳过
             continue
         result.append((pos, item))
     return result
@@ -196,6 +203,7 @@ def pick_section(text: str, section: str):
 # 跨年 diff
 # ---------------------------------------------------------------------------
 
+
 def _sentences(text: str) -> list:
     """粗粒度切句（中英文通用），过滤短碎片与纯数字表格行。"""
     text = re.sub(r"\s+", " ", text)
@@ -228,6 +236,7 @@ def diff_sections(old_text: str, new_text: str, top_n: int = 12):
 # ---------------------------------------------------------------------------
 # 命令
 # ---------------------------------------------------------------------------
+
 
 def cmd_text(path: str, output=None):
     text = load_text(path)
@@ -290,7 +299,7 @@ def cmd_diff(old_path: str, new_path: str, section: str, top_n: int):
     print(f"跨年章节对比 [{canon}]: {os.path.basename(old_path)} → {os.path.basename(new_path)}")
     print("=" * 70)
     print(f"  篇幅变化: {len(old_body):,} → {len(new_body):,} 字符（{len_change:+.1f}%）")
-    print(f"  文本相似度: {ratio*100:.0f}%（越低说明措辞/内容改动越大）")
+    print(f"  文本相似度: {ratio * 100:.0f}%（越低说明措辞/内容改动越大）")
     if canon == "risk" and len_change > 15:
         print("  ⚠️ 风险因素篇幅显著增加（>15%）——通常意味着新增实质性风险，逐条核对新增内容")
     print()
@@ -316,6 +325,7 @@ def cmd_diff(old_path: str, new_path: str, section: str, top_n: int):
 # CLI 入口
 # ---------------------------------------------------------------------------
 
+
 def main():
     parser = argparse.ArgumentParser(
         description="财报原文语义管道 — 章节抽取 + 跨年对比",
@@ -326,7 +336,8 @@ Examples:
   %(prog)s sections data/filings/usaapl/20251101-10-K.htm
   %(prog)s extract data/filings/usaapl/20251101-10-K.htm --section risk
   %(prog)s diff data/filings/usaapl/2024-10-K.htm data/filings/usaapl/2025-10-K.htm --section risk
-        """)
+        """,
+    )
     sub = parser.add_subparsers(dest="command")
 
     p_text = sub.add_parser("text", help="披露文件转纯文本")

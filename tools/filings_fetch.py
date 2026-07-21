@@ -20,7 +20,7 @@
 下载文件默认保存到 data/filings/{代码}/，PDF 可交给 pdf 解析能力提取正文。
 列表结果带本地缓存（TTL 1 天）；加 --no-cache 强制直连。
 
-依赖：零外部依赖（Python >= 3.8 标准库 + curl）。
+依赖：零外部依赖（Python >= 3.9 标准库 + curl）。
 退出码：0=成功 / 1=网络失败或无结果 / 2=参数错误。
 """
 
@@ -28,61 +28,41 @@ import argparse
 import json
 import os
 import re
-import subprocess
 import sys
 import time
 from datetime import datetime, timedelta
 from urllib.parse import urlencode
 
-EXIT_OK = 0
-EXIT_FAIL = 1
-EXIT_BAD_ARGS = 2
+from utils import EDGAR_UA as _EDGAR_UA
+from utils import EXIT_BAD_ARGS, EXIT_FAIL, EXIT_OK
+from utils import curl_get as _curl_base
+from utils import curl_get_json as _curl_json_base
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _CACHE_DIR = os.path.join(_ROOT, "data", "cache")
 _FILINGS_DIR = os.path.join(_ROOT, "data", "filings")
 _TTL_LIST = 86400  # 披露列表缓存 1 天
-_TIMEOUT = 20
-
-# SEC 要求 User-Agent 带联系方式，可用环境变量覆盖
-_EDGAR_UA = os.environ.get(
-    "EDGAR_UA", "ai-berkshire-research-skill contact@ai-berkshire.local"
-)
+_TIMEOUT = 20  # 财报文件下载超时（比默认 15s 稍宽）
 
 
 # ---------------------------------------------------------------------------
-# curl 直连（与 ashare_data.py 同风格：绕过系统代理，超时可控）
+# curl 直连（委托 utils 统一实现，本模块默认超时 20s）
 # ---------------------------------------------------------------------------
+
 
 def _curl(url, post_data=None, ua=None, binary=False):
     """curl 取数；post_data 非空时发 POST 表单；binary=True 返回 bytes。"""
-    cmd = ["/usr/bin/curl", "-s", "-L", "--noproxy", "*", "-m", str(_TIMEOUT),
-           "-H", f"User-Agent: {ua or 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)'}"]
-    if post_data is not None:
-        cmd += ["-X", "POST", "-d", post_data,
-                "-H", "Content-Type: application/x-www-form-urlencoded"]
-    cmd.append(url)
-    try:
-        result = subprocess.run(cmd, capture_output=True, timeout=_TIMEOUT + 5)
-    except subprocess.TimeoutExpired:
-        raise ConnectionError(f"请求超时 (>{_TIMEOUT}s): {url}")
-    if result.returncode != 0 or not result.stdout:
-        raise ConnectionError(f"请求失败 (curl 退出码 {result.returncode}): {url}")
-    if binary:
-        return result.stdout
-    try:
-        return result.stdout.decode("utf-8")
-    except UnicodeDecodeError:
-        return result.stdout.decode("gbk", errors="replace")
+    return _curl_base(url, post_data=post_data, ua=ua, binary=binary, timeout=_TIMEOUT, retries=0)
 
 
 def _curl_json(url, post_data=None, ua=None):
-    return json.loads(_curl(url, post_data=post_data, ua=ua))
+    return _curl_json_base(url, post_data=post_data, ua=ua, timeout=_TIMEOUT, retries=0)
 
 
 # ---------------------------------------------------------------------------
 # 轻量缓存（列表类结果，TTL 1 天）
 # ---------------------------------------------------------------------------
+
 
 def _cache_read(key):
     path = os.path.join(_CACHE_DIR, f"filings-{key}.json")
@@ -101,9 +81,15 @@ def _cache_write(key, payload):
         os.makedirs(_CACHE_DIR, exist_ok=True)
         path = os.path.join(_CACHE_DIR, f"filings-{key}.json")
         with open(path, "w", encoding="utf-8") as f:
-            json.dump({"fetched_at": time.time(),
-                       "fetched_date": time.strftime("%Y-%m-%d %H:%M"),
-                       "payload": payload}, f, ensure_ascii=False)
+            json.dump(
+                {
+                    "fetched_at": time.time(),
+                    "fetched_date": time.strftime("%Y-%m-%d %H:%M"),
+                    "payload": payload,
+                },
+                f,
+                ensure_ascii=False,
+            )
     except OSError:
         pass
 
@@ -111,6 +97,7 @@ def _cache_write(key, payload):
 # ---------------------------------------------------------------------------
 # 市场识别（与 ashare_data.py 代码格式约定一致）
 # ---------------------------------------------------------------------------
+
 
 def _detect_market(code: str) -> str:
     c = code.strip().upper()
@@ -130,7 +117,10 @@ def _safe_key(code: str) -> str:
 # ---------------------------------------------------------------------------
 
 _US_TYPE_MAP = {
-    "annual": "10-K", "quarterly": "10-Q", "current": "8-K", "proxy": "DEF 14A",
+    "annual": "10-K",
+    "quarterly": "10-Q",
+    "current": "8-K",
+    "proxy": "DEF 14A",
 }
 
 
@@ -170,12 +160,14 @@ def _list_us(code: str, form_type: str, limit: int, no_cache=False) -> list:
             continue
         accession = recent["accessionNumber"][i].replace("-", "")
         primary = recent["primaryDocument"][i]
-        items.append({
-            "date": recent["filingDate"][i],
-            "form": f,
-            "title": recent.get("primaryDocDescription", [""] * len(forms))[i] or primary,
-            "url": f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{accession}/{primary}",
-        })
+        items.append(
+            {
+                "date": recent["filingDate"][i],
+                "form": f,
+                "title": recent.get("primaryDocDescription", [""] * len(forms))[i] or primary,
+                "url": f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{accession}/{primary}",
+            }
+        )
         if len(items) >= 40:
             break
     if not no_cache:
@@ -188,10 +180,10 @@ def _list_us(code: str, form_type: str, limit: int, no_cache=False) -> list:
 # ---------------------------------------------------------------------------
 
 _CN_TYPE_MAP = {
-    "annual": "category_ndbg_szsh",      # 年报
-    "interim": "category_bndbg_szsh",    # 半年报
-    "q1": "category_yjdbg_szsh",         # 一季报
-    "q3": "category_sjdbg_szsh",         # 三季报
+    "annual": "category_ndbg_szsh",  # 年报
+    "interim": "category_bndbg_szsh",  # 半年报
+    "q1": "category_yjdbg_szsh",  # 一季报
+    "q3": "category_sjdbg_szsh",  # 三季报
     "all": "",
 }
 
@@ -214,13 +206,24 @@ def _list_a_cninfo(code_clean: str, form_type: str) -> list:
     to_date = datetime.now().strftime("%Y-%m-%d")
     from_date = (datetime.now() - timedelta(days=6 * 365)).strftime("%Y-%m-%d")
     payload = {
-        "pageNum": "1", "pageSize": "30", "column": "szse", "tabName": "fulltext",
-        "plate": "", "stock": f"{code_clean},{org_id}", "searchkey": "", "secid": "",
-        "category": category, "trade": "", "seDate": f"{from_date}~{to_date}",
-        "sortName": "", "sortType": "", "isHLtitle": "true",
+        "pageNum": "1",
+        "pageSize": "30",
+        "column": "szse",
+        "tabName": "fulltext",
+        "plate": "",
+        "stock": f"{code_clean},{org_id}",
+        "searchkey": "",
+        "secid": "",
+        "category": category,
+        "trade": "",
+        "seDate": f"{from_date}~{to_date}",
+        "sortName": "",
+        "sortType": "",
+        "isHLtitle": "true",
     }
-    data = _curl_json("http://www.cninfo.com.cn/new/hisAnnouncement/query",
-                      post_data=urlencode(payload))
+    data = _curl_json(
+        "http://www.cninfo.com.cn/new/hisAnnouncement/query", post_data=urlencode(payload)
+    )
     items = []
     for ann in data.get("announcements") or []:
         title = re.sub(r"</?em>", "", ann.get("announcementTitle", ""))
@@ -228,31 +231,42 @@ def _list_a_cninfo(code_clean: str, form_type: str) -> list:
         if any(k in title for k in ("摘要", "英文", "已取消")):
             continue
         ts = ann.get("announcementTime", 0) / 1000
-        items.append({
-            "date": time.strftime("%Y-%m-%d", time.localtime(ts)) if ts else "",
-            "form": form_type,
-            "title": f"{ann.get('secName', '')} {title}",
-            "url": "http://static.cninfo.com.cn/" + ann.get("adjunctUrl", ""),
-        })
+        items.append(
+            {
+                "date": time.strftime("%Y-%m-%d", time.localtime(ts)) if ts else "",
+                "form": form_type,
+                "title": f"{ann.get('secName', '')} {title}",
+                "url": "http://static.cninfo.com.cn/" + ann.get("adjunctUrl", ""),
+            }
+        )
     return items
 
 
 # 东财公告接口降级源：按标题关键词筛选定期报告
 _EM_TITLE_FILTER = {
-    "annual": ("年度报告",), "interim": ("半年度报告",),
-    "q1": ("一季度报告",), "q3": ("三季度报告",), "all": (),
+    "annual": ("年度报告",),
+    "interim": ("半年度报告",),
+    "q1": ("一季度报告",),
+    "q3": ("三季度报告",),
+    "all": (),
 }
 
 
 def _list_a_eastmoney(code_clean: str, form_type: str) -> list:
     """降级源：东财公告接口（巨潮不可达时回退）。PDF 走 pdf.dfcfw.com。"""
     params = {
-        "sr": "-1", "page_size": "50", "page_index": "1", "ann_type": "A",
-        "client_source": "web", "stock_list": code_clean, "f_node": "1",
+        "sr": "-1",
+        "page_size": "50",
+        "page_index": "1",
+        "ann_type": "A",
+        "client_source": "web",
+        "stock_list": code_clean,
+        "f_node": "1",
         "s_node": "0",
     }
-    data = _curl_json("https://np-anotice-stock.eastmoney.com/api/security/ann?"
-                      + urlencode(params))
+    data = _curl_json(
+        "https://np-anotice-stock.eastmoney.com/api/security/ann?" + urlencode(params)
+    )
     keywords = _EM_TITLE_FILTER[form_type]
     items = []
     for ann in (data.get("data") or {}).get("list") or []:
@@ -265,12 +279,14 @@ def _list_a_eastmoney(code_clean: str, form_type: str) -> list:
             continue
         codes = ann.get("codes") or [{}]
         sec_name = codes[0].get("short_name", "") if codes else ""
-        items.append({
-            "date": (ann.get("notice_date", "") or "")[:10],
-            "form": form_type,
-            "title": f"{sec_name} {title}".strip(),
-            "url": f"https://pdf.dfcfw.com/pdf/H2_{ann.get('art_code', '')}_1.pdf",
-        })
+        items.append(
+            {
+                "date": (ann.get("notice_date", "") or "")[:10],
+                "form": form_type,
+                "title": f"{sec_name} {title}".strip(),
+                "url": f"https://pdf.dfcfw.com/pdf/H2_{ann.get('art_code', '')}_1.pdf",
+            }
+        )
     return items
 
 
@@ -299,8 +315,8 @@ def _list_a(code: str, form_type: str, limit: int, no_cache=False) -> list:
 # ---------------------------------------------------------------------------
 
 _HK_TYPE_MAP = {
-    "annual": ("40000", "40100"),    # 年报
-    "interim": ("40000", "40200"),   # 中期/半年度报告
+    "annual": ("40000", "40100"),  # 年报
+    "interim": ("40000", "40200"),  # 中期/半年度报告
     "quarterly": ("40000", "40300"),  # 季度报告
     "all": ("-2", "-2"),
 }
@@ -309,8 +325,15 @@ _HK_TYPE_MAP = {
 def _hkex_stock_id(code_num: str) -> str:
     raw = _curl(
         "https://www1.hkexnews.hk/search/prefix.do?"
-        + urlencode({"callback": "cb", "lang": "ZH", "type": "A",
-                     "name": code_num.zfill(5), "market": "SEHK"})
+        + urlencode(
+            {
+                "callback": "cb",
+                "lang": "ZH",
+                "type": "A",
+                "name": code_num.zfill(5),
+                "market": "SEHK",
+            }
+        )
     )
     m = re.search(r"\((.*)\)\s*;?\s*$", raw, re.S)
     if not m:
@@ -337,15 +360,23 @@ def _list_hk(code: str, form_type: str, limit: int, no_cache=False) -> list:
     stock_id = _hkex_stock_id(code_num)
     t1, t2 = codes
     params = {
-        "sortDir": "0", "sortByOptions": "DateTime", "category": "0",
-        "market": "SEHK", "stockId": stock_id, "documentType": "-1",
+        "sortDir": "0",
+        "sortByOptions": "DateTime",
+        "category": "0",
+        "market": "SEHK",
+        "stockId": stock_id,
+        "documentType": "-1",
         "fromDate": (datetime.now() - timedelta(days=6 * 365)).strftime("%Y%m%d"),
         "toDate": datetime.now().strftime("%Y%m%d"),
-        "title": "", "searchType": "1", "t1code": t1,
-        "t2Gcode": "-2", "t2code": t2, "rowRange": "30", "lang": "ZH",
+        "title": "",
+        "searchType": "1",
+        "t1code": t1,
+        "t2Gcode": "-2",
+        "t2code": t2,
+        "rowRange": "30",
+        "lang": "ZH",
     }
-    data = _curl_json("https://www1.hkexnews.hk/search/titleSearchServlet.do?"
-                      + urlencode(params))
+    data = _curl_json("https://www1.hkexnews.hk/search/titleSearchServlet.do?" + urlencode(params))
     results = data.get("result")
     rows = json.loads(results) if isinstance(results, str) else (results or [])
     items = []
@@ -361,12 +392,14 @@ def _list_hk(code: str, form_type: str, limit: int, no_cache=False) -> list:
         date = f"{parts[2]}-{parts[1]}-{parts[0]}" if len(parts) == 3 else date_raw
         name = re.sub("<[^>]+>", " ", r.get("STOCK_NAME", "")).split()
         title = re.sub("<[^>]+>", " ", r.get("TITLE", "")).strip()
-        items.append({
-            "date": date,
-            "form": form_type,
-            "title": f"{name[0] if name else ''} {title}".strip(),
-            "url": link,
-        })
+        items.append(
+            {
+                "date": date,
+                "form": form_type,
+                "title": f"{name[0] if name else ''} {title}".strip(),
+                "url": link,
+            }
+        )
     if not no_cache:
         _cache_write(key, items)
     return items[:limit]
@@ -376,16 +409,14 @@ def _list_hk(code: str, form_type: str, limit: int, no_cache=False) -> list:
 # list / fetch 命令
 # ---------------------------------------------------------------------------
 
+
 def _dispatch_list(code: str, form_type: str, limit: int, no_cache=False) -> list:
     market = _detect_market(code)
     if market == "US":
-        return _list_us(code, form_type if form_type != "default" else "10-K",
-                        limit, no_cache)
+        return _list_us(code, form_type if form_type != "default" else "10-K", limit, no_cache)
     if market == "HK":
-        return _list_hk(code, form_type if form_type != "default" else "annual",
-                        limit, no_cache)
-    return _list_a(code, form_type if form_type != "default" else "annual",
-                   limit, no_cache)
+        return _list_hk(code, form_type if form_type != "default" else "annual", limit, no_cache)
+    return _list_a(code, form_type if form_type != "default" else "annual", limit, no_cache)
 
 
 def cmd_list(code: str, form_type: str, limit: int, no_cache=False):
@@ -414,8 +445,7 @@ def _guess_ext(url: str) -> str:
     return ".pdf"
 
 
-def cmd_fetch(code=None, form_type="default", latest=False, url=None,
-              output=None, no_cache=False):
+def cmd_fetch(code=None, form_type="default", latest=False, url=None, output=None, no_cache=False):
     """下载披露原文到 data/filings/{代码}/（或 --output 指定路径）。"""
     if url is None:
         if not (code and latest):
@@ -430,8 +460,7 @@ def cmd_fetch(code=None, form_type="default", latest=False, url=None,
             safe_date = items[0]["date"].replace("-", "")
             form = items[0]["form"].replace(" ", "").replace("/", "-")
             sub = _safe_key(code)
-            output = os.path.join(_FILINGS_DIR, sub,
-                                  f"{safe_date}-{form}{_guess_ext(url)}")
+            output = os.path.join(_FILINGS_DIR, sub, f"{safe_date}-{form}{_guess_ext(url)}")
     if output is None:
         name = os.path.basename(url.split("?")[0]) or f"filing{_guess_ext(url)}"
         output = os.path.join(_FILINGS_DIR, name)
@@ -456,6 +485,7 @@ def cmd_fetch(code=None, form_type="default", latest=False, url=None,
 # CLI 入口
 # ---------------------------------------------------------------------------
 
+
 def main():
     parser = argparse.ArgumentParser(
         description="一手财报原文管道 — SEC EDGAR(美股) + 巨潮(A股) + 披露易(港股)",
@@ -472,12 +502,17 @@ Examples:
   美股: 10-K / 10-Q / 8-K / "DEF 14A" / annual / quarterly / all
   A股:  annual(年报) / interim(半年报) / q1(一季报) / q3(三季报) / all
   港股: annual(年报) / interim(中期) / quarterly(季报) / all
-        """)
+        """,
+    )
     sub = parser.add_subparsers(dest="command")
 
     common = argparse.ArgumentParser(add_help=False)
-    common.add_argument("--type", default="default", dest="form_type",
-                        help="披露类型（默认：美股 10-K / A股港股年报）")
+    common.add_argument(
+        "--type",
+        default="default",
+        dest="form_type",
+        help="披露类型（默认：美股 10-K / A股港股年报）",
+    )
     common.add_argument("--no-cache", action="store_true", help="跳过列表缓存")
 
     p_list = sub.add_parser("list", help="列出披露文件", parents=[common])
@@ -499,15 +534,17 @@ Examples:
         if args.command == "list":
             cmd_list(args.code, args.form_type, args.limit, args.no_cache)
         else:
-            cmd_fetch(args.code, args.form_type, args.latest, args.url,
-                      args.output, args.no_cache)
+            cmd_fetch(args.code, args.form_type, args.latest, args.url, args.output, args.no_cache)
         sys.exit(EXIT_OK)
     except ValueError as e:
         print(f"❌ {e}")
         sys.exit(EXIT_BAD_ARGS)
     except (ConnectionError, json.JSONDecodeError) as e:
         print(f"❌ 接口请求失败: {e}", file=sys.stderr)
-        print("   降级路径：WebSearch「{公司名} 年报 PDF」或按 skills/financial-data/SKILL.md 网页源", file=sys.stderr)
+        print(
+            "   降级路径：WebSearch「{公司名} 年报 PDF」或按 skills/financial-data/SKILL.md 网页源",
+            file=sys.stderr,
+        )
         sys.exit(EXIT_FAIL)
 
 

@@ -1,6 +1,10 @@
 ---
 name: investment-research
 description: 投资研究——巴菲特-芒格-段永平-李录四大师综合分析框架，单 Agent 系统化研究一家公司并给出明确结论。当用户想对某公司做完整投资研究、四大师综合分析、得到买入/观望/回避结论时使用。
+type: executable
+confirm_level: medium
+tools_required: [financial_rigor.py, ashare_data.py, report_audit.py, chart_gen.py]
+depends_on: [financial-data]
 ---
 
 # 投资研究：巴菲特-芒格-段永平-李录 四大师综合分析框架
@@ -216,26 +220,4 @@ python3 tools/financial_rigor.py three-scenario \
 
 ## 数据抽检（准出流程）
 
-报告写入文件后，**必须**执行数据抽检，通过后方可发布：
-
-**Step 1 — 提取抽检清单（15%随机抽样）：**
-```bash
-python3 tools/report_audit.py extract \
-  --report <报告文件路径>
-```
-输出 JSON 模板，每项含 `fetched_value`（待填）。
-
-**Step 2 — 取数核验：**
-对清单中每个数据点，按 `skills/financial-data/SKILL.md` 规范从可靠信源取数
-（美股：macrotrends+stockanalysis；港股：aastocks+macrotrends；A股：东方财富+巨潮资讯），
-填入 `fetched_value` / `fetched_source` / `fetched_value2` / `fetched_source2`。
-
-**Step 3 — 输出判决：**
-```bash
-python3 tools/report_audit.py verdict \
-  --results '<填好的JSON>' \
-  --report <报告文件名>
-```
-
-- **【准出】**：所有抽检点偏差 ≤ 1% → 报告可发布
-- **【打回】**：任意点偏差 > 1% → 修正对应数据后重新抽检，直到准出
+报告写入文件后，**必须**按 [`references/audit-protocol.md`](../../references/audit-protocol.md) 执行数据抽检，通过后方可发布。

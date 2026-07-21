@@ -1,6 +1,10 @@
 ---
 name: private-company-research
 description: 未上市公司研究——多 Agent 并行深度研究框架，专为蚂蚁集团、小红书、SpaceX、Stripe 等一级市场未上市公司设计。当用户想研究一家未上市/一级市场公司、对私有公司做估值与深度分析时使用。
+type: executable
+confirm_level: heavy
+tools_required: [financial_rigor.py, report_audit.py]
+depends_on: [financial-data]
 ---
 
 # 未上市公司研究：多Agent并行深度研究框架
@@ -179,15 +183,9 @@ description: 未上市公司研究——多 Agent 并行深度研究框架，专
 
 将完整最终报告写入 `reports/{公司名}/{公司名}-private-{YYYYMMDD}.md`。
 
-报告写入后执行数据抽检（准出流程，CLAUDE.md 抽检政策：研报级）：
+报告写入后按 [`references/audit-protocol.md`](../../references/audit-protocol.md) 执行数据抽检（准出流程，CLAUDE.md 抽检政策：研报级）。
 
-```bash
-python3 tools/report_audit.py extract --report <报告文件路径>
-# 对清单每项取数核验后：
-python3 tools/report_audit.py verdict --results '<填好的JSON>' --report <报告文件名>
-```
-
-未上市公司特殊口径：抽检仅针对**可公开验证的数据点**（融资轮次金额、监管披露、上市公司关联披露中的数字）；标注 `[估计]`/🔴低置信度的推算值不入抽检范围，不得因推算值无法核验而判打回。**【准出】** 通过 → 交付；**【打回】** 有不通过 → 修正后重审。
+未上市公司特殊口径：抽检仅针对**可公开验证的数据点**（融资轮次金额、监管披露、上市公司关联披露中的数字）；标注 `[估计]`/🔴低置信度的推算值不入抽检范围，不得因推算值无法核验而判打回。
 
 ### 第九步：清理团队
 

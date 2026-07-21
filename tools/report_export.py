@@ -9,7 +9,7 @@ reports/ 下的研报是 Markdown + PNG 图表，直接发给别人会丢图/丢
     python3 tools/report_export.py reports/腾讯/腾讯-investment-research-20260720.md
     python3 tools/report_export.py <报告.md> --output /tmp/report.html
 
-依赖：零外部依赖（Python >= 3.8 标准库）。
+依赖：零外部依赖（Python >= 3.9 标准库）。
 退出码：0=成功 / 1=失败 / 2=参数错误。
 
 说明：支持研报常用的 Markdown 子集（标题/表格/列表/引用/代码块/粗斜体/图片/链接/分隔线）。
@@ -77,7 +77,8 @@ def _inline(text: str, base_dir: str) -> str:
     text = re.sub(
         r"!\[([^\]]*)\]\(([^)]+)\)",
         lambda m: f'<img alt="{m.group(1)}" src="{_embed_image(m.group(2), base_dir)}">',
-        text)
+        text,
+    )
     text = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r'<a href="\2">\1</a>', text)
     text = re.sub(r"`([^`]+)`", r"<code>\1</code>", text)
     text = re.sub(r"\*\*([^*]+)\*\*", r"<strong>\1</strong>", text)
@@ -118,8 +119,11 @@ def md_to_html(md: str, base_dir: str) -> str:
             i += 1
             continue
         # 表格（当前行含 | 且下一行是分隔行）
-        if ("|" in stripped and i + 1 < len(lines)
-                and re.match(r"^\s*\|?[\s:|-]+\|[\s:|-]*$", lines[i + 1])):
+        if (
+            "|" in stripped
+            and i + 1 < len(lines)
+            and re.match(r"^\s*\|?[\s:|-]+\|[\s:|-]*$", lines[i + 1])
+        ):
             close_list()
             out.append("<table>")
             out.append("<thead>" + _table_row(stripped, base_dir, "th") + "</thead><tbody>")
@@ -150,8 +154,11 @@ def md_to_html(md: str, base_dir: str) -> str:
             while i < len(lines) and lines[i].strip().startswith(">"):
                 quote.append(lines[i].strip().lstrip(">").strip())
                 i += 1
-            out.append("<blockquote>" + "<br>".join(_inline(q, base_dir) for q in quote if q)
-                       + "</blockquote>")
+            out.append(
+                "<blockquote>"
+                + "<br>".join(_inline(q, base_dir) for q in quote if q)
+                + "</blockquote>"
+            )
             continue
         # 列表
         m = re.match(r"^\s*[-*+]\s+(.*)", line)
@@ -219,8 +226,7 @@ def export(md_path: str, output=None) -> str:
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="报告导出 — Markdown 研报转自包含 HTML")
+    parser = argparse.ArgumentParser(description="报告导出 — Markdown 研报转自包含 HTML")
     parser.add_argument("report", help="报告 Markdown 路径")
     parser.add_argument("--output", default=None, help="输出路径（默认同目录同名 .html）")
     args = parser.parse_args()

@@ -1,6 +1,10 @@
 ---
 name: investment-checklist
 description: 巴菲特价值投资买入前 Checklist——对一只标的执行巴菲特式买入前逐项检查。当用户想在买入前对某公司做价值投资清单核对、快速判断是否符合买入标准时使用。
+type: executable
+confirm_level: light
+tools_required: [financial_rigor.py, report_audit.py]
+depends_on: [financial-data]
 ---
 
 # 巴菲特价值投资买入前 Checklist
@@ -240,19 +244,7 @@ python3 tools/financial_rigor.py three-scenario \
 
 ### 第八步：数据抽检（准出流程）
 
-报告写入后执行抽检，通过方可交付：
-
-```bash
-# Step 1 — 提取抽检清单（15%随机抽样）
-python3 tools/report_audit.py extract --report <报告文件路径>
-
-# Step 2 — 对清单每项从可靠信源取数（参见 skills/financial-data/SKILL.md）
-
-# Step 3 — 输出准出/打回判决
-python3 tools/report_audit.py verdict --results '<填好的JSON>' --report <报告文件名>
-```
-
-**【准出】** 全部通过 → 交付；**【打回】** 有不通过 → 修正后重审。
+报告写入后按 [`references/audit-protocol.md`](../../references/audit-protocol.md) 执行抽检，通过方可交付。
 
 ## 输出格式要求
 

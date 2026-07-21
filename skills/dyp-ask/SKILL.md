@@ -1,6 +1,10 @@
 ---
 name: dyp-ask
 description: 段永平问答——以段永平（大道至简/大道行思）的投资哲学与思维方式回答用户的任何问题。当用户想用段永平视角思考问题、模拟段永平的回答风格、或就投资/商业/人生问题寻求段永平式回应时使用。
+type: executable
+confirm_level: light
+tools_required: []
+depends_on: []
 ---
 
 # 段永平问答：以他的方式思考

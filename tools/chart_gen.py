@@ -34,18 +34,24 @@
 import argparse
 import contextlib
 import io
-import json
 import os
 import sys
 
-EXIT_OK = 0
-EXIT_UNAVAILABLE = 1   # matplotlib 缺失/损坏 → 调用方降级 Mermaid
-EXIT_BAD_ARGS = 2
+from utils import EXIT_BAD_ARGS, EXIT_OK, EXIT_UNAVAILABLE
+from utils import cli_entry as _cli_entry
+from utils import load_json_arg as _load_json_arg
 
 # 与投研报告风格匹配的克制配色（依次取用）
 _PALETTE = ["#2F5C8F", "#C0504D", "#4F8F6B", "#8064A2", "#E0A030", "#6B7B8C"]
-_CJK_FONTS = ["PingFang SC", "Hiragino Sans GB", "Heiti TC", "STHeiti",
-              "Microsoft YaHei", "Noto Sans CJK SC", "Arial Unicode MS"]
+_CJK_FONTS = [
+    "PingFang SC",
+    "Hiragino Sans GB",
+    "Heiti TC",
+    "STHeiti",
+    "Microsoft YaHei",
+    "Noto Sans CJK SC",
+    "Arial Unicode MS",
+]
 
 
 def _load_mpl():
@@ -54,12 +60,15 @@ def _load_mpl():
         # 静默导入期间第三方库的告警/回溯噪音，失败时只给出精简降级指引
         with contextlib.redirect_stderr(io.StringIO()):
             import matplotlib
+
             matplotlib.use("Agg")  # 无显示环境也可渲染
             import matplotlib.pyplot as plt
             from matplotlib import font_manager
     except Exception as e:  # ImportError 及编译不兼容等一切异常
         print(f"⚠️ matplotlib 不可用: {type(e).__name__}: {e}", file=sys.stderr)
-        print("   降级路径：按 references/report-visuals.md 用 Mermaid 代码块作图，", file=sys.stderr)
+        print(
+            "   降级路径：按 references/report-visuals.md 用 Mermaid 代码块作图，", file=sys.stderr
+        )
         print("   仍不支持时用符号/表格方案；启用本工具：pip install matplotlib", file=sys.stderr)
         sys.exit(EXIT_UNAVAILABLE)
 
@@ -73,28 +82,19 @@ def _load_mpl():
     return plt
 
 
-def _load_json_arg(raw, what, example):
-    """解析 JSON 参数；失败输出友好错误并退出码 2（与 financial_rigor.py 一致）。"""
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError as e:
-        print(f"❌ {what} 不是合法 JSON: {e}")
-        print(f"   正确格式示例: {example}")
-        print("   提示: shell 中整体用单引号包裹，内部键名用双引号")
-        sys.exit(EXIT_BAD_ARGS)
-
-
 def _validate_series(x, series):
     """校验 x 轴与各系列等长且均为数值。"""
     if not isinstance(x, list) or not x:
         print("❌ --x 必须是非空 JSON 数组，如 [2021,2022,2023]")
         sys.exit(EXIT_BAD_ARGS)
     if not isinstance(series, dict) or not series:
-        print('❌ --series 必须是 {系列名: [数值...]} 形式的 JSON 对象')
+        print("❌ --series 必须是 {系列名: [数值...]} 形式的 JSON 对象")
         sys.exit(EXIT_BAD_ARGS)
     for name, vals in series.items():
         if not isinstance(vals, list) or len(vals) != len(x):
-            print(f"❌ 系列「{name}」长度 {len(vals) if isinstance(vals, list) else '非数组'} 与 x 轴长度 {len(x)} 不一致")
+            print(
+                f"❌ 系列「{name}」长度 {len(vals) if isinstance(vals, list) else '非数组'} 与 x 轴长度 {len(x)} 不一致"
+            )
             sys.exit(EXIT_BAD_ARGS)
         if not all(isinstance(v, (int, float)) for v in vals):
             print(f"❌ 系列「{name}」存在非数值元素（不要带单位/逗号/百分号）")
@@ -117,7 +117,9 @@ def _save(plt, fig, output):
     fig.savefig(output, dpi=150, bbox_inches="tight")
     plt.close(fig)
     print(f"✅ 图表已生成: {output}")
-    print(f"   Markdown 引用（与报告同目录时）: ![图表]({os.path.relpath(output, os.path.dirname(out_dir) or '.')})")
+    print(
+        f"   Markdown 引用（与报告同目录时）: ![图表]({os.path.relpath(output, os.path.dirname(out_dir) or '.')})"
+    )
 
 
 def cmd_trend(args, plt):
@@ -130,14 +132,27 @@ def cmd_trend(args, plt):
     n = len(series)
     if args.kind == "line":
         for i, (name, vals) in enumerate(series.items()):
-            ax.plot(labels, vals, marker="o", linewidth=2,
-                    color=_PALETTE[i % len(_PALETTE)], label=name, zorder=3)
+            ax.plot(
+                labels,
+                vals,
+                marker="o",
+                linewidth=2,
+                color=_PALETTE[i % len(_PALETTE)],
+                label=name,
+                zorder=3,
+            )
     else:
         width = 0.8 / n
         for i, (name, vals) in enumerate(series.items()):
             pos = [j + i * width - 0.4 + width / 2 for j in range(len(labels))]
-            bars = ax.bar(pos, vals, width=width * 0.92,
-                          color=_PALETTE[i % len(_PALETTE)], label=name, zorder=3)
+            bars = ax.bar(
+                pos,
+                vals,
+                width=width * 0.92,
+                color=_PALETTE[i % len(_PALETTE)],
+                label=name,
+                zorder=3,
+            )
             if n == 1:  # 单系列时标注数值
                 ax.bar_label(bars, fmt="%g", padding=2, fontsize=9, color="#444444")
         ax.set_xticks(range(len(labels)))
@@ -155,7 +170,7 @@ def cmd_structure(args, plt):
     """类型2 结构类：占比饼图（大分部→小分部顺时针）。"""
     values = _load_json_arg(args.values, "--values", '{"增值服务":48,"网络广告":19}')
     if not isinstance(values, dict) or not values:
-        print('❌ --values 必须是 {分部名: 数值} 形式的非空 JSON 对象')
+        print("❌ --values 必须是 {分部名: 数值} 形式的非空 JSON 对象")
         sys.exit(EXIT_BAD_ARGS)
     if not all(isinstance(v, (int, float)) and v >= 0 for v in values.values()):
         print("❌ --values 各占比必须是非负数值")
@@ -165,10 +180,15 @@ def cmd_structure(args, plt):
     vals = [v for _, v in items]
     fig, ax = plt.subplots(figsize=(6.5, 5))
     wedges, _, autotexts = ax.pie(
-        vals, labels=labels, autopct="%1.1f%%", startangle=90, counterclock=False,
+        vals,
+        labels=labels,
+        autopct="%1.1f%%",
+        startangle=90,
+        counterclock=False,
         colors=[_PALETTE[i % len(_PALETTE)] for i in range(len(vals))],
         wedgeprops={"linewidth": 1.2, "edgecolor": "white"},
-        textprops={"fontsize": 10})
+        textprops={"fontsize": 10},
+    )
     for t in autotexts:
         t.set_color("white")
         t.set_fontsize(9)
@@ -186,19 +206,32 @@ def cmd_quadrant(args, plt):
     """类型7 象限类：0-1 坐标散点 + 四象限分区。"""
     points = _load_json_arg(args.points, "--points", '{"腾讯":[0.45,0.9],"茅台":[0.55,0.85]}')
     if not isinstance(points, dict) or not points:
-        print('❌ --points 必须是 {名称: [x,y]} 形式的非空 JSON 对象（坐标取值 0-1）')
+        print("❌ --points 必须是 {名称: [x,y]} 形式的非空 JSON 对象（坐标取值 0-1）")
         sys.exit(EXIT_BAD_ARGS)
     for name, xy in points.items():
-        if (not isinstance(xy, list) or len(xy) != 2
-                or not all(isinstance(v, (int, float)) and 0 <= v <= 1 for v in xy)):
+        if (
+            not isinstance(xy, list)
+            or len(xy) != 2
+            or not all(isinstance(v, (int, float)) and 0 <= v <= 1 for v in xy)
+        ):
             print(f"❌ 点「{name}」坐标必须是 [x,y] 且取值 0-1: {xy}")
             sys.exit(EXIT_BAD_ARGS)
-    quad_labels = _load_json_arg(args.labels, "--labels",
-                                 '["好公司贵价格","好公司好价格","价值陷阱警惕","退出"]') \
-        if args.labels else ["好公司贵价格（持有不加）", "好公司好价格（重点配置）",
-                             "差公司低估值（价值陷阱警惕）", "差公司高估值（退出）"]
+    quad_labels = (
+        _load_json_arg(
+            args.labels, "--labels", '["好公司贵价格","好公司好价格","价值陷阱警惕","退出"]'
+        )
+        if args.labels
+        else [
+            "好公司贵价格（持有不加）",
+            "好公司好价格（重点配置）",
+            "差公司低估值（价值陷阱警惕）",
+            "差公司高估值（退出）",
+        ]
+    )
     if not isinstance(quad_labels, list) or len(quad_labels) != 4:
-        print("❌ --labels 必须是 4 元素 JSON 数组，顺序为 [右上, 左上, 左下, 右下]（同 Mermaid quadrant-1..4）")
+        print(
+            "❌ --labels 必须是 4 元素 JSON 数组，顺序为 [右上, 左上, 左下, 右下]（同 Mermaid quadrant-1..4）"
+        )
         sys.exit(EXIT_BAD_ARGS)
 
     fig, ax = plt.subplots(figsize=(6.5, 6.5))
@@ -207,13 +240,20 @@ def cmd_quadrant(args, plt):
     ax.axvline(0.5, color="#BBBBBB", linewidth=1, linestyle="--", zorder=1)
     corners = [(0.75, 0.95), (0.25, 0.95), (0.25, 0.05), (0.75, 0.05)]  # 右上/左上/左下/右下
     for (cx, cy), text in zip(corners, quad_labels):
-        ax.text(cx, cy, text, ha="center", va="center", fontsize=9,
-                color="#999999", zorder=2)
+        ax.text(cx, cy, text, ha="center", va="center", fontsize=9, color="#999999", zorder=2)
     for i, (name, (px, py)) in enumerate(points.items()):
-        ax.scatter(px, py, s=90, color=_PALETTE[i % len(_PALETTE)], zorder=3,
-                   edgecolors="white", linewidths=1.2)
-        ax.annotate(name, (px, py), textcoords="offset points", xytext=(8, 6),
-                    fontsize=10, zorder=4)
+        ax.scatter(
+            px,
+            py,
+            s=90,
+            color=_PALETTE[i % len(_PALETTE)],
+            zorder=3,
+            edgecolors="white",
+            linewidths=1.2,
+        )
+        ax.annotate(
+            name, (px, py), textcoords="offset points", xytext=(8, 6), fontsize=10, zorder=4
+        )
     ax.set_xlim(0, 1)
     ax.set_ylim(0, 1)
     ax.set_xticks([0, 0.25, 0.5, 0.75, 1])
@@ -228,10 +268,12 @@ def cmd_quadrant(args, plt):
     _save(plt, fig, args.output)
 
 
+@_cli_entry
 def main():
     parser = argparse.ArgumentParser(
         description="报告图表生成 — matplotlib 输出 PNG（不可用时退出码 1，降级 Mermaid）",
-        formatter_class=argparse.RawDescriptionHelpFormatter)
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     sub = parser.add_subparsers(dest="command")
 
     common = argparse.ArgumentParser(add_help=False)
@@ -240,24 +282,23 @@ def main():
 
     tr = sub.add_parser("trend", help="类型1 趋势类（柱状/折线）", parents=[common])
     tr.add_argument("--x", required=True, help="x 轴 JSON 数组，如 [2021,2022,2023]")
-    tr.add_argument("--series", required=True, help='JSON: {系列名: [数值...]}')
+    tr.add_argument("--series", required=True, help="JSON: {系列名: [数值...]}")
     tr.add_argument("--ylabel", default="", help="y 轴单位标签")
     tr.add_argument("--kind", choices=["bar", "line"], default="bar")
 
     st = sub.add_parser("structure", help="类型2 结构类（饼图）", parents=[common])
-    st.add_argument("--values", required=True, help='JSON: {分部名: 占比数值}')
+    st.add_argument("--values", required=True, help="JSON: {分部名: 占比数值}")
 
     cp = sub.add_parser("compare", help="类型5 对比类（分组柱状）", parents=[common])
     cp.add_argument("--x", required=True, help="x 轴 JSON 数组")
-    cp.add_argument("--series", required=True, help='JSON: {公司名: [数值...]}，至少 2 个系列')
+    cp.add_argument("--series", required=True, help="JSON: {公司名: [数值...]}，至少 2 个系列")
     cp.add_argument("--ylabel", default="", help="y 轴单位标签")
 
     qd = sub.add_parser("quadrant", help="类型7 象限类（质量×估值散点）", parents=[common])
-    qd.add_argument("--points", required=True, help='JSON: {名称: [x,y]}，坐标 0-1')
+    qd.add_argument("--points", required=True, help="JSON: {名称: [x,y]}，坐标 0-1")
     qd.add_argument("--xlabel", default="估值便宜 → 昂贵")
     qd.add_argument("--ylabel", default="质量低 → 高")
-    qd.add_argument("--labels", default=None,
-                    help='可选，4 元素 JSON 数组 [右上,左上,左下,右下]')
+    qd.add_argument("--labels", default=None, help="可选，4 元素 JSON 数组 [右上,左上,左下,右下]")
 
     args = parser.parse_args()
     if not args.command:
@@ -265,8 +306,12 @@ def main():
         sys.exit(EXIT_BAD_ARGS)
 
     plt = _load_mpl()  # 不可用时在此退出码 1
-    {"trend": cmd_trend, "structure": cmd_structure,
-     "compare": cmd_compare, "quadrant": cmd_quadrant}[args.command](args, plt)
+    {
+        "trend": cmd_trend,
+        "structure": cmd_structure,
+        "compare": cmd_compare,
+        "quadrant": cmd_quadrant,
+    }[args.command](args, plt)
     sys.exit(EXIT_OK)
 
 

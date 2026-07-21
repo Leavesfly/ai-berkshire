@@ -1,0 +1,223 @@
+{
+  "$schema": "技能注册表 — 机器可读的技能清单，供 doctor.py 完整性校验与未来自动化使用",
+  "version": "1.2.0",
+  "skills": [
+    {
+      "name": "bottleneck-hunter",
+      "category": "discovery",
+      "confirm_level": "heavy",
+      "tools_required": [
+        "ashare_data.py",
+        "financial_rigor.py",
+        "report_audit.py"
+      ]
+    },
+    {
+      "name": "deep-company-series",
+      "category": "content",
+      "confirm_level": "heavy",
+      "tools_required": [
+        "report_audit.py"
+      ]
+    },
+    {
+      "name": "dyp-ask",
+      "category": "perspective",
+      "confirm_level": "light",
+      "tools_required": []
+    },
+    {
+      "name": "earnings-review",
+      "category": "monitoring",
+      "confirm_level": "light",
+      "tools_required": [
+        "filings_fetch.py",
+        "filings_parse.py",
+        "financial_rigor.py",
+        "report_audit.py"
+      ]
+    },
+    {
+      "name": "earnings-team",
+      "category": "content",
+      "confirm_level": "heavy",
+      "tools_required": [
+        "filings_fetch.py",
+        "filings_parse.py",
+        "financial_rigor.py",
+        "report_audit.py"
+      ]
+    },
+    {
+      "name": "exit-review",
+      "category": "decision",
+      "confirm_level": "medium",
+      "tools_required": [
+        "financial_rigor.py",
+        "ashare_data.py"
+      ]
+    },
+    {
+      "name": "financial-data",
+      "category": "shared-spec",
+      "confirm_level": "light",
+      "tools_required": [
+        "ashare_data.py",
+        "financial_rigor.py",
+        "report_audit.py"
+      ]
+    },
+    {
+      "name": "industry-funnel",
+      "category": "discovery",
+      "confirm_level": "heavy",
+      "tools_required": [
+        "quality_screen.py",
+        "ashare_data.py",
+        "financial_rigor.py",
+        "report_audit.py"
+      ]
+    },
+    {
+      "name": "industry-research",
+      "category": "discovery",
+      "confirm_level": "medium",
+      "tools_required": [
+        "financial_rigor.py",
+        "report_audit.py",
+        "chart_gen.py"
+      ]
+    },
+    {
+      "name": "investment-checklist",
+      "category": "decision",
+      "confirm_level": "light",
+      "tools_required": [
+        "financial_rigor.py",
+        "report_audit.py"
+      ]
+    },
+    {
+      "name": "investment-research",
+      "category": "deep-research",
+      "confirm_level": "medium",
+      "tools_required": [
+        "financial_rigor.py",
+        "ashare_data.py",
+        "report_audit.py",
+        "chart_gen.py"
+      ]
+    },
+    {
+      "name": "investment-team",
+      "category": "deep-research",
+      "confirm_level": "heavy",
+      "tools_required": [
+        "financial_rigor.py",
+        "ashare_data.py",
+        "report_audit.py",
+        "chart_gen.py"
+      ]
+    },
+    {
+      "name": "management-deep-dive",
+      "category": "deep-research",
+      "confirm_level": "medium",
+      "tools_required": [
+        "financial_rigor.py",
+        "filings_fetch.py",
+        "report_audit.py"
+      ]
+    },
+    {
+      "name": "masters-portfolio",
+      "category": "monitoring",
+      "confirm_level": "light",
+      "tools_required": [
+        "masters_portfolio.py"
+      ]
+    },
+    {
+      "name": "news-pulse",
+      "category": "monitoring",
+      "confirm_level": "medium",
+      "tools_required": [
+        "ashare_data.py"
+      ]
+    },
+    {
+      "name": "portfolio-review",
+      "category": "monitoring",
+      "confirm_level": "medium",
+      "tools_required": [
+        "portfolio_calc.py",
+        "financial_rigor.py",
+        "ashare_data.py",
+        "report_audit.py"
+      ]
+    },
+    {
+      "name": "private-company-research",
+      "category": "deep-research",
+      "confirm_level": "heavy",
+      "tools_required": [
+        "financial_rigor.py",
+        "report_audit.py"
+      ]
+    },
+    {
+      "name": "quality-screen",
+      "category": "discovery",
+      "confirm_level": "light",
+      "tools_required": [
+        "quality_screen.py",
+        "ashare_data.py",
+        "report_audit.py"
+      ]
+    },
+    {
+      "name": "thesis-drift",
+      "category": "monitoring",
+      "confirm_level": "light",
+      "tools_required": [
+        "financial_rigor.py",
+        "filings_parse.py"
+      ]
+    },
+    {
+      "name": "thesis-tracker",
+      "category": "monitoring",
+      "confirm_level": "light",
+      "tools_required": [
+        "financial_rigor.py",
+        "ashare_data.py"
+      ]
+    },
+    {
+      "name": "track-record",
+      "category": "monitoring",
+      "confirm_level": "light",
+      "tools_required": [
+        "decision_log.py",
+        "ashare_data.py"
+      ]
+    },
+    {
+      "name": "watchlist-monitor",
+      "category": "monitoring",
+      "confirm_level": "light",
+      "tools_required": [
+        "watchlist.py",
+        "ashare_data.py"
+      ]
+    },
+    {
+      "name": "wechat-article",
+      "category": "content",
+      "confirm_level": "heavy",
+      "tools_required": [
+        "report_audit.py"
+      ]
+    }
+  ]
+}

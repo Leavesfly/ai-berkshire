@@ -33,9 +33,7 @@ import os
 import sys
 from datetime import datetime
 
-EXIT_OK = 0
-EXIT_FAIL = 1
-EXIT_BAD_ARGS = 2
+from utils import EXIT_BAD_ARGS, EXIT_FAIL, EXIT_OK
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _BASE = os.path.join(_ROOT, "data", "companies")
@@ -81,18 +79,30 @@ def cmd_set(args):
         doc["name"] = args.name
     for fact in doc["facts"]:
         if fact["key"] == args.key and fact["category"] == args.category:
-            fact.update({"value": args.value, "source": args.source or fact.get("source", ""),
-                         "verified": datetime.now().strftime("%Y-%m-%d")})
+            fact.update(
+                {
+                    "value": args.value,
+                    "source": args.source or fact.get("source", ""),
+                    "verified": datetime.now().strftime("%Y-%m-%d"),
+                }
+            )
             _save(args.code, doc)
             print(f"  ✅ 已更新事实: [{args.category}] {args.key} = {args.value}")
             return
-    doc["facts"].append({
-        "category": args.category, "key": args.key, "value": args.value,
-        "source": args.source or "", "verified": datetime.now().strftime("%Y-%m-%d"),
-    })
+    doc["facts"].append(
+        {
+            "category": args.category,
+            "key": args.key,
+            "value": args.value,
+            "source": args.source or "",
+            "verified": datetime.now().strftime("%Y-%m-%d"),
+        }
+    )
     _save(args.code, doc)
-    print(f"  ✅ 已归档事实: [{args.category}] {args.key} = {args.value}"
-          f"（{doc.get('name') or args.code} 共 {len(doc['facts'])} 条）")
+    print(
+        f"  ✅ 已归档事实: [{args.category}] {args.key} = {args.value}"
+        f"（{doc.get('name') or args.code} 共 {len(doc['facts'])} 条）"
+    )
 
 
 def cmd_get(code: str, category=None):
@@ -112,7 +122,11 @@ def cmd_get(code: str, category=None):
             continue
         print(f"  [{cat}]")
         for f in group:
-            src = f"（{f['source']}，{f['verified']} 验证）" if f.get("source") else f"（{f['verified']} 验证）"
+            src = (
+                f"（{f['source']}，{f['verified']} 验证）"
+                if f.get("source")
+                else f"（{f['verified']} 验证）"
+            )
             print(f"    {f['key']}: {f['value']} {src}")
     print()
     print("  提示: 引用时在报告中标注「档案数据（{验证日期}验证）」；发现事实已过期请用 set 更新")
@@ -140,8 +154,14 @@ def cmd_list():
             try:
                 with open(p, encoding="utf-8") as f:
                     doc = json.load(f)
-                entries.append((doc.get("name") or sub, doc.get("code", sub),
-                                len(doc.get("facts", [])), doc.get("updated", "-")))
+                entries.append(
+                    (
+                        doc.get("name") or sub,
+                        doc.get("code", sub),
+                        len(doc.get("facts", [])),
+                        doc.get("updated", "-"),
+                    )
+                )
             except (OSError, json.JSONDecodeError):
                 continue
     if not entries:
@@ -157,7 +177,8 @@ def cmd_list():
 def main():
     parser = argparse.ArgumentParser(
         description="公司档案库 — 已验证事实的跨会话沉淀",
-        formatter_class=argparse.RawDescriptionHelpFormatter)
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     sub = parser.add_subparsers(dest="command")
 
     p_set = sub.add_parser("set", help="归档/更新一条已验证事实")

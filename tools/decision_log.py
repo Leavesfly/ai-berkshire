@@ -28,9 +28,7 @@ import os
 import sys
 from datetime import datetime
 
-EXIT_OK = 0
-EXIT_FAIL = 1
-EXIT_BAD_ARGS = 2
+from utils import EXIT_BAD_ARGS, EXIT_OK
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _LOG_PATH = os.path.join(_ROOT, "data", "decisions.jsonl")
@@ -41,6 +39,7 @@ _VALID_VERDICTS = ("买入", "观望", "回避", "卖出", "持有", "减仓", "
 # ---------------------------------------------------------------------------
 # 读写
 # ---------------------------------------------------------------------------
+
 
 def _load_records() -> list:
     if not os.path.exists(_LOG_PATH):
@@ -76,8 +75,10 @@ def cmd_add(args):
     os.makedirs(os.path.dirname(_LOG_PATH), exist_ok=True)
     with open(_LOG_PATH, "a", encoding="utf-8") as f:
         f.write(json.dumps(record, ensure_ascii=False) + "\n")
-    print(f"  ✅ 决策已记录: {record['date']} {args.company} — {args.verdict}"
-          + (f" @ {args.price}{record['currency']}" if args.price else ""))
+    print(
+        f"  ✅ 决策已记录: {record['date']} {args.company} — {args.verdict}"
+        + (f" @ {args.price}{record['currency']}" if args.price else "")
+    )
     print(f"     日志: {os.path.relpath(_LOG_PATH, _ROOT)}（共 {len(_load_records())} 条）")
 
 
@@ -89,7 +90,9 @@ def cmd_list(company=None, limit=20):
         print("  （暂无决策记录）")
         return
     print("=" * 66)
-    print(f"决策日志{'（' + company + '）' if company else ''} — 最近 {min(limit, len(records))} 条 / 共 {len(records)} 条")
+    print(
+        f"决策日志{'（' + company + '）' if company else ''} — 最近 {min(limit, len(records))} 条 / 共 {len(records)} 条"
+    )
     print("=" * 66)
     for r in records[-limit:]:
         price = f" @ {r['price']}{r.get('currency', '')}" if r.get("price") else ""
@@ -102,11 +105,12 @@ def cmd_list(company=None, limit=20):
 # review：决策 vs 现价复盘
 # ---------------------------------------------------------------------------
 
+
 def _get_current_price(code: str):
     """通过 ashare_data 行情通道取现价（导入复用，命中15分钟缓存时秒回）。"""
     try:
-        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
         import ashare_data
+
         d, _note = ashare_data._get_quote(code)
         if d and d.get("price"):
             return float(d["price"])
@@ -127,8 +131,11 @@ def _judge(verdict: str, change_pct):
 
 
 # 各市场默认基准（与 ashare_data 日K通道兼容的指数代码）
-_BENCH_BY_MARKET = {"A": ("sh000300", "沪深300"), "HK": ("hkHSI", "恒指"),
-                    "US": ("us.INX", "标普500")}
+_BENCH_BY_MARKET = {
+    "A": ("sh000300", "沪深300"),
+    "HK": ("hkHSI", "恒指"),
+    "US": ("us.INX", "标普500"),
+}
 
 
 def _bench_for(code: str):
@@ -144,8 +151,8 @@ def _bench_change(bench_code: str, since_date: str, series_cache: dict):
     """基准指数自 since_date 以来的涨跌幅（%）；取不到返回 None。"""
     try:
         if bench_code not in series_cache:
-            sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
             import ashare_data
+
             days = max(60, (datetime.now() - datetime.strptime(since_date, "%Y-%m-%d")).days + 30)
             series, _note = ashare_data.get_close_series(bench_code, min(days, 2000))
             series_cache[bench_code] = series or []
@@ -192,8 +199,10 @@ def cmd_review(company=None, benchmark=False):
             misaligned += 1
         cur_s = f"{cur:.2f}" if cur else "-"
         chg_s = f"{change:+.1f}%" if change is not None else "-"
-        line = (f"  {r['date']:10s} {r['company']:8s} {r['verdict']:4s} "
-                f"{float(r['price']):>9.2f} {cur_s:>9s} {chg_s:>8s}")
+        line = (
+            f"  {r['date']:10s} {r['company']:8s} {r['verdict']:4s} "
+            f"{float(r['price']):>9.2f} {cur_s:>9s} {chg_s:>8s}"
+        )
         if benchmark:
             b_code, _b_name = _bench_for(code)
             b_chg = _bench_change(b_code, r["date"], bench_cache)
@@ -214,9 +223,13 @@ def cmd_review(company=None, benchmark=False):
     total = aligned + misaligned
     print()
     if total:
-        print(f"  方向一致率: {aligned}/{total} = {aligned/total*100:.0f}%（不含观望/取价失败）")
+        print(
+            f"  方向一致率: {aligned}/{total} = {aligned / total * 100:.0f}%（不含观望/取价失败）"
+        )
     if benchmark and excess_n:
-        print(f"  平均超额收益: {excess_sum/excess_n:+.1f}%（{excess_n} 条；基准按市场自动选 沪深300/恒指/标普500）")
+        print(
+            f"  平均超额收益: {excess_sum / excess_n:+.1f}%（{excess_n} 条；基准按市场自动选 沪深300/恒指/标普500）"
+        )
         print("  ⚠️ 胜率高但超额为负 = 只是赶上了牛市；超额才是判断力的证据")
     print("  ⚠️ 价值投资以年为单位验证，短期价格背离≠判断错误；")
     print("     背离标的应走 thesis-drift 复查论文，而不是直接改结论")
@@ -226,18 +239,19 @@ def cmd_review(company=None, benchmark=False):
 # CLI 入口
 # ---------------------------------------------------------------------------
 
+
 def main():
     parser = argparse.ArgumentParser(
         description="投资决策日志 — 记录结论、复盘判断质量",
-        formatter_class=argparse.RawDescriptionHelpFormatter)
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     sub = parser.add_subparsers(dest="command")
 
     p_add = sub.add_parser("add", help="追加一条决策记录")
     p_add.add_argument("--company", required=True, help="公司名")
     p_add.add_argument("--code", default="", help="股票代码（600519 / hk00700 / usAAPL），复盘需要")
     p_add.add_argument("--skill", required=True, help="产出结论的子流程名")
-    p_add.add_argument("--verdict", required=True,
-                       help=f"结论: {' / '.join(_VALID_VERDICTS)}")
+    p_add.add_argument("--verdict", required=True, help=f"结论: {' / '.join(_VALID_VERDICTS)}")
     p_add.add_argument("--price", type=float, default=None, help="决策时股价，复盘需要")
     p_add.add_argument("--currency", default="", help="币种（CNY/HKD/USD）")
     p_add.add_argument("--reason", default="", help="一句话核心理由")
@@ -250,8 +264,11 @@ def main():
 
     p_rev = sub.add_parser("review", help="决策 vs 现价复盘")
     p_rev.add_argument("--company", default=None)
-    p_rev.add_argument("--benchmark", action="store_true",
-                       help="额外对比同期指数（按市场自动选沪深300/恒指/标普500）")
+    p_rev.add_argument(
+        "--benchmark",
+        action="store_true",
+        help="额外对比同期指数（按市场自动选沪深300/恒指/标普500）",
+    )
 
     args = parser.parse_args()
     if not args.command:

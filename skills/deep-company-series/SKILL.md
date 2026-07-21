@@ -1,6 +1,10 @@
 ---
 name: deep-company-series
 description: 深度公司系列——为一家公司撰写 8 篇公众号/视频号深度长文系列，核心是极严格的事实核查标准。当用户想为某公司产出成体系的深度长文内容、做公司深度解读系列、或需要高标准事实核查的财经长文创作时使用。
+type: executable
+confirm_level: heavy
+tools_required: [report_audit.py]
+depends_on: [financial-data]
 ---
 
 # 深度公司系列：8 篇长文拆一家公司

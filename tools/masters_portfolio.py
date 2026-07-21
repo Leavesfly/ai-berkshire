@@ -20,7 +20,7 @@
 注意：13F 只覆盖美股多头（不含 A股/港股/债券/空头），披露滞后季末最多 45 天，
 只能当"聪明钱方向参考"，不能当抄作业清单——大师买入成本与你不同。
 
-依赖：零外部依赖（Python >= 3.8 标准库 + curl）。
+依赖：零外部依赖（Python >= 3.9 标准库 + curl）。
 退出码：0=成功 / 1=网络失败或无结果 / 2=参数错误。
 """
 
@@ -32,16 +32,14 @@ import sys
 import time
 from urllib.parse import quote
 
-EXIT_OK = 0
-EXIT_FAIL = 1
-EXIT_BAD_ARGS = 2
+from utils import EDGAR_UA as _EDGAR_UA
+from utils import EXIT_BAD_ARGS, EXIT_FAIL, EXIT_OK
+from utils import curl_get as _curl
+from utils import curl_get_json as _curl_json
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _CACHE_DIR = os.path.join(_ROOT, "data", "cache")
 _TTL = 86400  # 13F 季度更新，列表/持仓缓存 1 天足够
-
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from filings_fetch import _curl, _curl_json, _EDGAR_UA  # noqa: E402  复用 curl 与 UA
 
 # 内置大师别名 → CIK（EDGAR 官方编号）
 _MASTERS = {
@@ -53,6 +51,7 @@ _MASTERS = {
 # ---------------------------------------------------------------------------
 # 缓存（与 filings_fetch 同风格，前缀区分）
 # ---------------------------------------------------------------------------
+
 
 def _cache_read(key):
     path = os.path.join(_CACHE_DIR, f"13f-{key}.json")
@@ -69,11 +68,16 @@ def _cache_read(key):
 def _cache_write(key, payload):
     try:
         os.makedirs(_CACHE_DIR, exist_ok=True)
-        with open(os.path.join(_CACHE_DIR, f"13f-{key}.json"), "w",
-                  encoding="utf-8") as f:
-            json.dump({"fetched_at": time.time(),
-                       "fetched_date": time.strftime("%Y-%m-%d %H:%M"),
-                       "payload": payload}, f, ensure_ascii=False)
+        with open(os.path.join(_CACHE_DIR, f"13f-{key}.json"), "w", encoding="utf-8") as f:
+            json.dump(
+                {
+                    "fetched_at": time.time(),
+                    "fetched_date": time.strftime("%Y-%m-%d %H:%M"),
+                    "payload": payload,
+                },
+                f,
+                ensure_ascii=False,
+            )
     except OSError:
         pass
 
@@ -81,6 +85,7 @@ def _cache_write(key, payload):
 # ---------------------------------------------------------------------------
 # CIK 解析与 13F 抓取
 # ---------------------------------------------------------------------------
+
 
 def _resolve_cik(who: str) -> tuple:
     """别名/CIK → (10位CIK, 展示名)。"""
@@ -95,8 +100,11 @@ def _resolve_cik(who: str) -> tuple:
 
 def cmd_search(name: str):
     """EDGAR 机构名称搜索（限定 13F 申报人）。"""
-    url = ("https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&company="
-           + quote(name) + "&type=13F&dateb=&owner=include&count=20&output=atom")
+    url = (
+        "https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&company="
+        + quote(name)
+        + "&type=13F&dateb=&owner=include&count=20&output=atom"
+    )
     raw = _curl(url, ua=_EDGAR_UA)
     hits = re.findall(r"<title>(.*?)</title>[\s\S]*?CIK=(\d{10})", raw)
     print("=" * 66)
@@ -125,11 +133,13 @@ def _list_13f_filings(cik: str) -> list:
     for i, form in enumerate(recent.get("form", [])):
         if form != "13F-HR":  # 只要原始申报，不要修正版 13F-HR/A 以免期次错位
             continue
-        out.append({
-            "date": recent["filingDate"][i],
-            "period": recent.get("reportDate", [""] * 10 ** 6)[i],
-            "accession": recent["accessionNumber"][i].replace("-", ""),
-        })
+        out.append(
+            {
+                "date": recent["filingDate"][i],
+                "period": recent.get("reportDate", [""] * 10**6)[i],
+                "accession": recent["accessionNumber"][i].replace("-", ""),
+            }
+        )
     return out
 
 
@@ -141,8 +151,8 @@ def _fetch_infotable(cik: str, accession: str) -> list:
         return cached
 
     idx = _curl_json(
-        f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{accession}/index.json",
-        ua=_EDGAR_UA)
+        f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{accession}/index.json", ua=_EDGAR_UA
+    )
     xml_name = None
     for item in idx.get("directory", {}).get("item", []):
         n = item.get("name", "")
@@ -153,27 +163,31 @@ def _fetch_infotable(cik: str, accession: str) -> list:
     if not xml_name:
         raise ConnectionError("该 13F 申报未找到 information table XML")
     raw = _curl(
-        f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{accession}/{xml_name}",
-        ua=_EDGAR_UA)
+        f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{accession}/{xml_name}", ua=_EDGAR_UA
+    )
 
     rows = []
     for block in re.findall(r"<(?:\w+:)?infoTable>([\s\S]*?)</(?:\w+:)?infoTable>", raw):
+
         def _tag(name):
             m = re.search(rf"<(?:\w+:)?{name}>([\s\S]*?)</(?:\w+:)?{name}>", block)
             return m.group(1).strip() if m else ""
+
         try:
             value = float(_tag("value"))
             shares = float(_tag("sshPrnamt") or 0)
         except ValueError:
             continue
-        rows.append({
-            "issuer": re.sub(r"\s+", " ", _tag("nameOfIssuer")),
-            "class": _tag("titleOfClass"),
-            "cusip": _tag("cusip").upper(),
-            "value": value,
-            "shares": shares,
-            "putcall": _tag("putCall"),
-        })
+        rows.append(
+            {
+                "issuer": re.sub(r"\s+", " ", _tag("nameOfIssuer")),
+                "class": _tag("titleOfClass"),
+                "cusip": _tag("cusip").upper(),
+                "value": value,
+                "shares": shares,
+                "putcall": _tag("putCall"),
+            }
+        )
     if rows:
         _cache_write(key, rows)
     return rows
@@ -197,9 +211,9 @@ def _aggregate(rows: list) -> dict:
 def _fmt_value(v: float) -> str:
     """13F value 2023 起为美元全额（更早年份为千美元，本工具主用近期数据）。"""
     if v >= 1e9:
-        return f"{v/1e9:.1f}B"
+        return f"{v / 1e9:.1f}B"
     if v >= 1e6:
-        return f"{v/1e6:.0f}M"
+        return f"{v / 1e6:.0f}M"
     return f"{v:,.0f}"
 
 
@@ -219,7 +233,9 @@ def cmd_holdings(who: str, top: int, quarter=None):
         prefix = f"{m.group(1)}-{month_end}"
         match = [f for f in filings if f["period"].startswith(prefix)]
         if not match:
-            print(f"❌ 未找到 {quarter} 期 13F（可用期次: {', '.join(f['period'] for f in filings[:8])}）")
+            print(
+                f"❌ 未找到 {quarter} 期 13F（可用期次: {', '.join(f['period'] for f in filings[:8])}）"
+            )
             sys.exit(EXIT_FAIL)
         target = match[0]
 
@@ -256,10 +272,12 @@ def cmd_diff(who: str, threshold: float):
     new_total = sum(a["value"] for a in new_agg.values()) or 1
     old_total = sum(a["value"] for a in old_agg.values()) or 1
 
-    opened = sorted([(n, a) for n, a in new_agg.items() if n not in old_agg],
-                    key=lambda kv: -kv[1]["value"])
-    closed = sorted([(n, a) for n, a in old_agg.items() if n not in new_agg],
-                    key=lambda kv: -kv[1]["value"])
+    opened = sorted(
+        [(n, a) for n, a in new_agg.items() if n not in old_agg], key=lambda kv: -kv[1]["value"]
+    )
+    closed = sorted(
+        [(n, a) for n, a in old_agg.items() if n not in new_agg], key=lambda kv: -kv[1]["value"]
+    )
     changed = []
     for n, a in new_agg.items():
         o = old_agg.get(n)
@@ -278,26 +296,29 @@ def cmd_diff(who: str, threshold: float):
     if opened:
         print(f"  🆕 新建仓（{len(opened)} 个）：")
         for _n, a in opened[:10]:
-            print(f"     + {a['name'][:40]:40s} ${_fmt_value(a['value'])}（权重 {a['value']/new_total*100:.1f}%）")
+            print(
+                f"     + {a['name'][:40]:40s} ${_fmt_value(a['value'])}（权重 {a['value'] / new_total * 100:.1f}%）"
+            )
     if closed:
         print(f"  🚪 清仓（{len(closed)} 个）：")
         for _n, a in closed[:10]:
             print(f"     - {a['name'][:40]:40s} 原持 ${_fmt_value(a['value'])}")
     if changed:
-        print(f"  🔁 加减仓（股数变动 ≥{threshold*100:.0f}%）：")
+        print(f"  🔁 加减仓（股数变动 ≥{threshold * 100:.0f}%）：")
         for n, chg, w in changed[:12]:
             arrow = "加仓" if chg > 0 else "减仓"
-            print(f"     {arrow} {n[:38]:38s} 股数 {chg*100:+.0f}%（现权重 {w:.1f}%）")
+            print(f"     {arrow} {n[:38]:38s} 股数 {chg * 100:+.0f}%（现权重 {w:.1f}%）")
     if not (opened or closed or changed):
         print("  ✅ 两季持仓无显著变动（按股数阈值）")
     print()
-    print("  解读: 新建仓/大幅加仓标的可作为研究线索（说\"研究 XX\"），清仓需区分")
+    print('  解读: 新建仓/大幅加仓标的可作为研究线索（说"研究 XX"），清仓需区分')
     print("  估值兑现与逻辑变化——大师卖出理由不会写在 13F 里")
 
 
 # ---------------------------------------------------------------------------
 # CLI 入口
 # ---------------------------------------------------------------------------
+
 
 def main():
     parser = argparse.ArgumentParser(
@@ -310,7 +331,8 @@ Examples:
   %(prog)s holdings 0001061768 --quarter 2026Q1
   %(prog)s diff berkshire
   %(prog)s search Hillhouse
-        """)
+        """,
+    )
     sub = parser.add_subparsers(dest="command")
 
     p_h = sub.add_parser("holdings", help="最新一季持仓清单")
@@ -320,8 +342,9 @@ Examples:
 
     p_d = sub.add_parser("diff", help="最近两季持仓变动")
     p_d.add_argument("who", help=f"别名（{'/'.join(_MASTERS)}）或 CIK")
-    p_d.add_argument("--threshold", type=float, default=0.10,
-                     help="加减仓股数变动阈值（默认0.10=10%%）")
+    p_d.add_argument(
+        "--threshold", type=float, default=0.10, help="加减仓股数变动阈值（默认0.10=10%%）"
+    )
 
     p_s = sub.add_parser("search", help="按名称搜索 13F 申报机构")
     p_s.add_argument("name", help="机构名称（英文注册名命中率更高）")
@@ -344,8 +367,10 @@ Examples:
         sys.exit(EXIT_BAD_ARGS)
     except (ConnectionError, json.JSONDecodeError) as e:
         print(f"❌ 接口请求失败: {e}", file=sys.stderr)
-        print("   降级路径：WebSearch「{机构名} 13F latest quarter」（whalewisdom/dataroma 等聚合站）",
-              file=sys.stderr)
+        print(
+            "   降级路径：WebSearch「{机构名} 13F latest quarter」（whalewisdom/dataroma 等聚合站）",
+            file=sys.stderr,
+        )
         sys.exit(EXIT_FAIL)
 
 

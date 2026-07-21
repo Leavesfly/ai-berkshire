@@ -1,6 +1,10 @@
 ---
 name: financial-data
 description: 财务数据获取与交叉验证规范——所有涉及企业财务数据的研究均需遵循的数据源优先级与双源交叉验证标准（每个关键数据必须来自两个独立来源，误差>1%须标记）。当需要获取美股/港股/A股财务数据、核实财务数字、或确定可靠数据源时参考。本规范被其他多个投研技能引用。
+type: shared-spec
+confirm_level: light
+tools_required: [ashare_data.py, financial_rigor.py, report_audit.py]
+depends_on: []
 ---
 
 # 财务数据获取与交叉验证规范

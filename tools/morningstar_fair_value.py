@@ -4,12 +4,13 @@
 计算潜在涨幅，输出 Top 100。
 """
 
-import json
-import subprocess
-import time
 import csv
+import json
 import os
+import time
 from datetime import datetime
+
+from utils import curl_get
 
 API_BASE = (
     "https://lt.morningstar.com/api/rest.svc/klr5zyak8x/security/screener"
@@ -31,12 +32,9 @@ OUTPUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "dat
 def fetch_page(page: int) -> dict:
     """抓取 Morningstar 筛选器指定页的数据（curl 直连，返回解析后的 JSON）。"""
     url = API_BASE.format(page=page, page_size=PAGE_SIZE)
-    result = subprocess.run(
-        ["curl", "-s", "-H", "User-Agent: Mozilla/5.0", url],
-        capture_output=True, text=True, timeout=30,
-    )
     try:
-        return json.loads(result.stdout)
+        raw = curl_get(url, timeout=30)
+        return json.loads(raw)
     except (json.JSONDecodeError, ValueError):
         raise ConnectionError(
             "Morningstar 接口返回非 JSON（接口/内嵌 key 可能已失效）。"
@@ -54,9 +52,9 @@ def extract_ticker(tenforeid: str) -> str:
 
 def main():
     """抓取全部有公允价值估计的美股，计算潜在涨幅并输出 Top 100，同时保存完整 CSV。"""
-    print(f"\n{'='*80}")
+    print(f"\n{'=' * 80}")
     print(f"  Morningstar 公允价值筛选  {datetime.now().strftime('%Y-%m-%d %H:%M')}")
-    print(f"{'='*80}\n")
+    print(f"{'=' * 80}\n")
 
     # 第一页获取总数
     print("  正在获取第 1 页...")
@@ -94,35 +92,41 @@ def main():
         ticker = extract_ticker(row.get("TenforeId", ""))
         upside = (fair_value - close_price) / close_price * 100
 
-        stocks.append({
-            "ticker": ticker,
-            "name": row.get("Name", ""),
-            "close_price": round(close_price, 2),
-            "fair_value": round(fair_value, 2),
-            "upside_pct": round(upside, 1),
-            "star_rating": row.get("StarRatingM255", ""),
-            "moat": row.get("EconomicMoat", ""),
-            "uncertainty": row.get("AssessmentOfFairValueUncertainty", ""),
-            "sector": row.get("SectorName", ""),
-            "industry": row.get("IndustryName", ""),
-        })
+        stocks.append(
+            {
+                "ticker": ticker,
+                "name": row.get("Name", ""),
+                "close_price": round(close_price, 2),
+                "fair_value": round(fair_value, 2),
+                "upside_pct": round(upside, 1),
+                "star_rating": row.get("StarRatingM255", ""),
+                "moat": row.get("EconomicMoat", ""),
+                "uncertainty": row.get("AssessmentOfFairValueUncertainty", ""),
+                "sector": row.get("SectorName", ""),
+                "industry": row.get("IndustryName", ""),
+            }
+        )
 
     # 按潜在涨幅排序
     stocks.sort(key=lambda x: x["upside_pct"], reverse=True)
 
     # 输出 Top 100
-    print(f"\n{'='*80}")
-    print(f"  潜在涨幅 Top 100")
-    print(f"{'='*80}\n")
-    print(f"  {'排名':>4} {'代码':<8} {'公司名':<35} {'现价':>10} {'公允价值':>10} {'潜在涨幅':>8} {'星级':>4} {'护城河':<8} {'行业':<20}")
-    print(f"  {'-'*4} {'-'*8} {'-'*35} {'-'*10} {'-'*10} {'-'*8} {'-'*4} {'-'*8} {'-'*20}")
+    print(f"\n{'=' * 80}")
+    print("  潜在涨幅 Top 100")
+    print(f"{'=' * 80}\n")
+    print(
+        f"  {'排名':>4} {'代码':<8} {'公司名':<35} {'现价':>10} {'公允价值':>10} {'潜在涨幅':>8} {'星级':>4} {'护城河':<8} {'行业':<20}"
+    )
+    print(
+        f"  {'-' * 4} {'-' * 8} {'-' * 35} {'-' * 10} {'-' * 10} {'-' * 8} {'-' * 4} {'-' * 8} {'-' * 20}"
+    )
 
     for i, s in enumerate(stocks[:100], 1):
         print(
             f"  {i:>4} {s['ticker']:<8} {s['name'][:35]:<35} "
             f"${s['close_price']:>9,.2f} ${s['fair_value']:>9,.2f} "
             f"{s['upside_pct']:>+7.1f}% "
-            f"{'★'*int(s['star_rating']) if s['star_rating'] else 'N/A':>4} "
+            f"{'★' * int(s['star_rating']) if s['star_rating'] else 'N/A':>4} "
             f"{s['moat']:<8} {s['industry'][:20]:<20}"
         )
 
@@ -132,10 +136,22 @@ def main():
     csv_path = os.path.join(OUTPUT_DIR, f"morningstar_fair_value_{today}.csv")
 
     with open(csv_path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=[
-            "rank", "ticker", "name", "close_price", "fair_value",
-            "upside_pct", "star_rating", "moat", "uncertainty", "sector", "industry"
-        ])
+        writer = csv.DictWriter(
+            f,
+            fieldnames=[
+                "rank",
+                "ticker",
+                "name",
+                "close_price",
+                "fair_value",
+                "upside_pct",
+                "star_rating",
+                "moat",
+                "uncertainty",
+                "sector",
+                "industry",
+            ],
+        )
         writer.writeheader()
         for i, s in enumerate(stocks, 1):
             writer.writerow({"rank": i, **s})
@@ -146,9 +162,9 @@ def main():
     # 统计摘要
     undervalued = [s for s in stocks if s["upside_pct"] > 0]
     overvalued = [s for s in stocks if s["upside_pct"] < 0]
-    print(f"  📊 统计摘要:")
-    print(f"     低估股票: {len(undervalued)} 只 ({len(undervalued)/len(stocks)*100:.0f}%)")
-    print(f"     高估股票: {len(overvalued)} 只 ({len(overvalued)/len(stocks)*100:.0f}%)")
+    print("  📊 统计摘要:")
+    print(f"     低估股票: {len(undervalued)} 只 ({len(undervalued) / len(stocks) * 100:.0f}%)")
+    print(f"     高估股票: {len(overvalued)} 只 ({len(overvalued) / len(stocks) * 100:.0f}%)")
     if undervalued:
         avg_upside = sum(s["upside_pct"] for s in undervalued) / len(undervalued)
         print(f"     低估股票平均潜在涨幅: +{avg_upside:.1f}%")

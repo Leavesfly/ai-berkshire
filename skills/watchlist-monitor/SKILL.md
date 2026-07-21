@@ -1,6 +1,10 @@
 ---
 name: watchlist-monitor
 description: 观察清单监控——维护关注标的的买卖区间并批量扫描触发信号。当用户想"盯一下这几只股票"、"跌到多少提醒我"、"扫一遍观察清单"、"我的自选股怎么样了"时使用。
+type: executable
+confirm_level: light
+tools_required: [watchlist.py, ashare_data.py]
+depends_on: []
 ---
 
 # 观察清单监控：把"问才动"变成"主动盯"

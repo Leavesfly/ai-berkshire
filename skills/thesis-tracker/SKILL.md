@@ -1,6 +1,10 @@
 ---
 name: thesis-tracker
 description: 投资论文追踪——买入后的纪律系统，定期检查投资论文是否仍然成立。当用户想跟踪已持仓标的的投资逻辑、做买入后的纪律性复查、判断是否需要加减仓或退出时使用。
+type: executable
+confirm_level: light
+tools_required: [financial_rigor.py, ashare_data.py]
+depends_on: [financial-data]
 ---
 
 # 投资论文追踪：买入后的纪律系统

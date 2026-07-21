@@ -1,6 +1,10 @@
 ---
 name: earnings-team
 description: 财报精读团队——四位价值投资大师并行解读财报，再经编辑润色、读者评审，产出可直接发布的公众号文章。当用户想以多 Agent 团队方式深读财报并产出发布级内容、多视角交叉解读一份财报时使用。
+type: executable
+confirm_level: heavy
+tools_required: [filings_fetch.py, filings_parse.py, financial_rigor.py, report_audit.py]
+depends_on: [financial-data]
 ---
 
 # 财报精读团队：四大师并行解读 + 公众号发布
@@ -237,18 +241,7 @@ reports/{公司名}/
 
 ## 数据抽检（准出流程）
 
-对最终文章执行抽检：
-
-```bash
-python3 tools/report_audit.py extract \
-  --report reports/{公司名}/{公司名}-earnings-{期间}.md
-
-python3 tools/report_audit.py verdict \
-  --results '<填好的JSON>' \
-  --report {报告文件名}
-```
-
-**【准出】** 全部通过 → 可发布；**【打回】** 有不通过 → 修正后重审。
+对最终文章按 [`references/audit-protocol.md`](../../references/audit-protocol.md) 执行抽检，通过方可发布。
 
 ## 与现有 Skill 的关系
 

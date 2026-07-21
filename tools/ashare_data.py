@@ -30,11 +30,28 @@
 import argparse
 import json
 import os
-import subprocess
 import sys
 import time
 from decimal import Decimal
-from urllib.parse import urlencode, urlparse
+from urllib.parse import urlparse
+
+from core.config import CACHE_TTL_FINANCIALS as _TTL_FINANCIALS
+from core.config import CACHE_TTL_KLINE as _TTL_KLINE
+from core.config import CACHE_TTL_QUOTE as _TTL_QUOTE
+from core.formatting import fmt_num as _fmt_num
+from core.formatting import fmt_pct as _fmt_pct
+from core.formatting import fmt_yi as _fmt_yi
+from core.market import detect_market_type as _detect_market_type
+from core.market import market as _market
+from core.market import market_label as _market_label
+
+# 市场识别与格式化纯函数（提取到 core 层，此处保留别名以向后兼容）
+from core.market import normalize_code as _normalize_code
+from core.market import qq_code as _qq_code
+from core.market import tickflow_symbol as _tickflow_symbol
+from core.market import yf_ticker as _yf_ticker
+from utils import curl_get as _curl
+from utils import curl_get_json as _curl_json
 
 # ---------------------------------------------------------------------------
 # 可选依赖导入（缺失时优雅降级）
@@ -49,56 +66,24 @@ try:
     os.environ.setdefault("NO_PROXY", "*")
     os.environ.setdefault("no_proxy", "*")
     import akshare as ak
+
     _HAS_AKSHARE = True
-except (ImportError, Exception):
+except Exception:  # ImportError 及 akshare 内部初始化异常
     pass
 
 try:
     import yfinance as yf
+
     _HAS_YFINANCE = True
-except (ImportError, Exception):
+except Exception:  # ImportError 及 yfinance 内部初始化异常
     pass
 
 try:
     from tickflow import TickFlow
+
     _HAS_TICKFLOW = True
-except (ImportError, Exception):
+except Exception:  # ImportError 及 tickflow 内部初始化异常
     pass
-
-_TIMEOUT = 15
-_RETRIES = 1          # 失败/超时后重试次数
-_RETRY_WAIT = 2       # 重试间隔（秒）
-
-
-def _curl(url):
-    """用 curl --noproxy 直连，绕过系统代理；失败/超时后自动重试 1 次。"""
-    last_err = None
-    for attempt in range(_RETRIES + 1):
-        try:
-            result = subprocess.run(
-                ["/usr/bin/curl", "-s", "--noproxy", "*",
-                 "-H", "User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
-                 url],
-                capture_output=True, timeout=_TIMEOUT,
-            )
-            if result.returncode == 0 and result.stdout.strip():
-                try:
-                    return result.stdout.decode("utf-8")
-                except UnicodeDecodeError:
-                    return result.stdout.decode("gbk")
-            last_err = ConnectionError(f"请求失败 (curl 退出码 {result.returncode}): {url}")
-        except subprocess.TimeoutExpired:
-            last_err = ConnectionError(f"请求超时 (>{_TIMEOUT}s): {url}")
-        if attempt < _RETRIES:
-            time.sleep(_RETRY_WAIT)
-    raise last_err
-
-
-def _curl_json(url, params=None):
-    """用 curl 获取并解析 JSON；params 会编码为查询字符串附加到 url。"""
-    if params:
-        url = f"{url}?{urlencode(params)}"
-    return json.loads(_curl(url))
 
 
 # ---------------------------------------------------------------------------
@@ -108,9 +93,6 @@ def _curl_json(url, params=None):
 _CACHE_DIR = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "cache"
 )
-_TTL_QUOTE = 15 * 60          # 行情类：15 分钟
-_TTL_FINANCIALS = 7 * 86400   # 财务类：7 天
-_TTL_KLINE = 86400            # 日K线：1 天
 
 
 def _cache_path(kind: str, code: str) -> str:
@@ -158,7 +140,7 @@ def _cached_fetch(kind: str, code: str, ttl: int, fetch_fn, no_cache=False):
         if not no_cache:
             _cache_write(kind, code, payload)
         return payload, None
-    except (ConnectionError, json.JSONDecodeError, Exception) as e:
+    except (ConnectionError, json.JSONDecodeError, Exception):
         if entry:
             return entry["payload"], (
                 f"[缓存数据 抓取于{entry['fetched_date']}]（网络失败回退，可能过期）"
@@ -170,96 +152,14 @@ def _cached_fetch(kind: str, code: str, ttl: int, fetch_fn, no_cache=False):
 # 腾讯行情 API（稳定可靠，无需鉴权）
 # ---------------------------------------------------------------------------
 
-def _normalize_code(code: str) -> str:
-    """去掉交易所后缀（.SH/.SZ/.BJ），返回纯数字股票代码。"""
-    return code.strip().upper().replace(".SH", "").replace(".SZ", "").replace(".BJ", "")
-
-
-def _market(code: str) -> str:
-    """根据代码首位数字推断交易所：沪 SH / 深 SZ / 北 BJ。"""
-    code = _normalize_code(code)
-    if code.startswith(("6", "9", "5")):
-        return "SH"
-    if code.startswith(("0", "3", "2", "1")):
-        return "SZ"
-    if code.startswith(("4", "8")):
-        return "BJ"
-    return "SH"
-
-
-def _detect_market_type(code: str) -> str:
-    """检测代码所属市场类型：'A' / 'HK' / 'US'。"""
-    c = code.strip()
-    cu = c.upper()
-    if cu.endswith(".HK") or (cu.startswith("HK") and cu[2:].isdigit()):
-        return "HK"
-    if cu.startswith("US") and len(cu) > 2 and not cu[2:].isdigit():
-        return "US"
-    return "A"
-
-
-def _qq_code(code: str) -> str:
-    """将股票代码转为腾讯行情格式。
-
-    支持三个市场：
-    - A股：600519 / 600519.SH → sh600519
-    - 港股：hk00700 / 0700.HK / 00700.HK → hk00700
-    - 美股：usAAPL / usBRK.A → usAAPL
-    """
-    c = code.strip()
-    cu = c.upper()
-    # 已带交易所前缀的代码（含指数，如 sh000300 沪深300）直接透传
-    if len(cu) == 8 and cu[:2] in ("SH", "SZ", "BJ") and cu[2:].isdigit():
-        return cu.lower()
-    if cu.endswith(".HK"):
-        num = cu[:-3]
-        if num.isdigit():
-            return "hk" + num.zfill(5)
-    if cu.startswith("HK") and cu[2:].isdigit():
-        return "hk" + cu[2:].zfill(5)
-    if cu.startswith("HK") and len(cu) > 2:
-        return "hk" + c[2:]  # 港股指数字母代码（hkHSI 恒指等）保留原大小写透传
-    if cu.startswith("US") and len(cu) > 2 and not cu[2:].isdigit():
-        return "us" + cu[2:]
-    code = _normalize_code(c)
-    return f"{_market(code).lower()}{code}"
-
-
-def _yf_ticker(code: str) -> str:
-    """将用户输入的代码转为 yfinance ticker 格式。
-
-    - 港股：hk00700 / 0700.HK / 00700.HK → 0700.HK（Yahoo 用 4 位）
-    - 美股：usAAPL → AAPL
-    """
-    c = code.strip()
-    cu = c.upper()
-    if cu.endswith(".HK"):
-        num = cu[:-3].lstrip("0") or "0"
-        return num.zfill(4) + ".HK"
-    if cu.startswith("HK") and cu[2:].isdigit():
-        num = cu[2:].lstrip("0") or "0"
-        return num.zfill(4) + ".HK"
-    if cu.startswith("US") and len(cu) > 2:
-        return cu[2:]
-    return c
-
-
-def _market_label(qq_code: str) -> str:
-    """根据腾讯行情代码前缀返回市场标签与币种提示。"""
-    if qq_code.startswith("hk"):
-        return "港股（币种：港元）"
-    if qq_code.startswith("us"):
-        return "美股（币种：美元）"
-    return "A股（币种：人民币）"
-
 
 def _parse_qq_quote(raw: str) -> dict:
-    """解析腾讯行情数据。格式：v_shXXXXXX="字段1~字段2~..."; """
+    """解析腾讯行情数据。格式：v_shXXXXXX="字段1~字段2~...";"""
     start = raw.find('"')
     end = raw.rfind('"')
     if start < 0 or end <= start:
         return {}
-    fields = raw[start + 1:end].split("~")
+    fields = raw[start + 1 : end].split("~")
     if len(fields) < 50:
         return {}
     return {
@@ -286,51 +186,10 @@ def _parse_qq_quote(raw: str) -> dict:
     }
 
 
-def _fmt_yi(value) -> str:
-    """将数值按量级格式化为「亿 / 万」单位。"""
-    if value is None or value == "-" or value == "":
-        return "-"
-    try:
-        v = float(value)
-    except (ValueError, TypeError):
-        return str(value)
-    if abs(v) >= 1e8:
-        return f"{v / 1e8:.2f}亿"
-    if abs(v) >= 1e4:
-        return f"{v / 1e4:.2f}万"
-    return f"{v:.2f}"
-
-
-def _fmt_pct(value) -> str:
-    """将数值格式化为百分比字符串。"""
-    if value is None or value == "-" or value == "":
-        return "-"
-    try:
-        return f"{float(value):.2f}%"
-    except (ValueError, TypeError):
-        return str(value)
-
-
-def _fmt_num(value, unit="") -> str:
-    """格式化大数字（自动转换为亿/万）。"""
-    if value is None or value != value:  # NaN check
-        return "-"
-    try:
-        v = float(value)
-    except (ValueError, TypeError):
-        return str(value)
-    if abs(v) >= 1e12:
-        return f"{v / 1e12:.2f}万亿{unit}"
-    if abs(v) >= 1e8:
-        return f"{v / 1e8:.2f}亿{unit}"
-    if abs(v) >= 1e4:
-        return f"{v / 1e4:.2f}万{unit}"
-    return f"{v:.2f}{unit}"
-
-
 # ---------------------------------------------------------------------------
 # 行情命令
 # ---------------------------------------------------------------------------
+
 
 def _fetch_quote_dict(qq_code: str) -> dict:
     """从腾讯行情拉取并解析单只股票；美股无结果时自动补交易所后缀重试。"""
@@ -349,8 +208,11 @@ def _get_quote(code: str, no_cache=False):
     """带缓存的行情获取，返回 (dict, 缓存标注)。"""
     qq_code = _qq_code(code)
     payload, note = _cached_fetch(
-        "quote", qq_code, _TTL_QUOTE,
-        lambda: _fetch_quote_dict(qq_code), no_cache=no_cache,
+        "quote",
+        qq_code,
+        _TTL_QUOTE,
+        lambda: _fetch_quote_dict(qq_code),
+        no_cache=no_cache,
     )
     return payload, note
 
@@ -415,7 +277,7 @@ def cmd_valuation(code: str, no_cache=False):
         cap = Decimal(market_cap_yi) * Decimal("1e8")
         shares = cap / p
         print(f"\n  推算总股本: {_fmt_yi(float(shares))}股 [仅供参考，非独立验证]")
-        print(f"  提示: 独立市值验算请取交易所/F10总股本后调用 financial_rigor.py verify-market-cap")
+        print("  提示: 独立市值验算请取交易所/F10总股本后调用 financial_rigor.py verify-market-cap")
     except Exception:
         pass
 
@@ -423,6 +285,7 @@ def cmd_valuation(code: str, no_cache=False):
 # ---------------------------------------------------------------------------
 # A股财务数据（akshare 同花顺源，降级→东财 datacenter API）
 # ---------------------------------------------------------------------------
+
 
 def _fetch_financials_a_akshare(code_clean: str) -> list:
     """通过 akshare 同花顺源获取 A 股年度财务摘要，返回标准化 list[dict]。"""
@@ -433,6 +296,7 @@ def _fetch_financials_a_akshare(code_clean: str) -> list:
     df = df.tail(5).iloc[::-1]  # 倒序，最新在前
     reports = []
     for _, row in df.iterrows():
+
         def _parse_val(v):
             """解析 '747.34亿' / '34.19%' / 'False' 等格式。"""
             if v is None or v == "False" or v == "" or (isinstance(v, float) and v != v):
@@ -458,20 +322,22 @@ def _fetch_financials_a_akshare(code_clean: str) -> list:
             except ValueError:
                 return None
 
-        reports.append({
-            "REPORT_DATE": str(row.get("报告期", "")),
-            "revenue": _parse_val(row.get("营业总收入")),
-            "revenue_growth": _parse_val(row.get("营业总收入同比增长率")),
-            "net_profit": _parse_val(row.get("净利润")),
-            "profit_growth": _parse_val(row.get("净利润同比增长率")),
-            "eps": _parse_val(row.get("基本每股收益")),
-            "bps": _parse_val(row.get("每股净资产")),
-            "roe": _parse_val(row.get("净资产收益率")),
-            "gross_margin": _parse_val(row.get("销售毛利率")),
-            "net_margin": _parse_val(row.get("销售净利率")),
-            "debt_ratio": _parse_val(row.get("资产负债率")),
-            "ocf_per_share": _parse_val(row.get("每股经营现金流")),
-        })
+        reports.append(
+            {
+                "REPORT_DATE": str(row.get("报告期", "")),
+                "revenue": _parse_val(row.get("营业总收入")),
+                "revenue_growth": _parse_val(row.get("营业总收入同比增长率")),
+                "net_profit": _parse_val(row.get("净利润")),
+                "profit_growth": _parse_val(row.get("净利润同比增长率")),
+                "eps": _parse_val(row.get("基本每股收益")),
+                "bps": _parse_val(row.get("每股净资产")),
+                "roe": _parse_val(row.get("净资产收益率")),
+                "gross_margin": _parse_val(row.get("销售毛利率")),
+                "net_margin": _parse_val(row.get("销售净利率")),
+                "debt_ratio": _parse_val(row.get("资产负债率")),
+                "ocf_per_share": _parse_val(row.get("每股经营现金流")),
+            }
+        )
     return reports
 
 
@@ -504,26 +370,29 @@ def _fetch_financials_a_eastmoney(code_clean: str) -> list:
         except Exception:
             raw_reports = []
     for r in raw_reports[:5]:
-        reports.append({
-            "REPORT_DATE": (r.get("REPORT_DATE", "") or "")[:10],
-            "revenue": r.get("TOTALOPERATEREVE"),
-            "revenue_growth": r.get("TOTALOPERATEREVETZ"),
-            "net_profit": r.get("PARENTNETPROFIT"),
-            "profit_growth": r.get("PARENTNETPROFITTZ"),
-            "eps": r.get("EPSJB"),
-            "bps": r.get("BPS"),
-            "roe": r.get("ROEJQ"),
-            "gross_margin": None,
-            "net_margin": None,
-            "debt_ratio": None,
-            "ocf_per_share": None,
-        })
+        reports.append(
+            {
+                "REPORT_DATE": (r.get("REPORT_DATE", "") or "")[:10],
+                "revenue": r.get("TOTALOPERATEREVE"),
+                "revenue_growth": r.get("TOTALOPERATEREVETZ"),
+                "net_profit": r.get("PARENTNETPROFIT"),
+                "profit_growth": r.get("PARENTNETPROFITTZ"),
+                "eps": r.get("EPSJB"),
+                "bps": r.get("BPS"),
+                "roe": r.get("ROEJQ"),
+                "gross_margin": None,
+                "net_margin": None,
+                "debt_ratio": None,
+                "ocf_per_share": None,
+            }
+        )
     return reports
 
 
 # ---------------------------------------------------------------------------
 # 港股/美股财务数据（yfinance）
 # ---------------------------------------------------------------------------
+
 
 def _fetch_financials_yf(code: str) -> list:
     """通过 yfinance 获取港股/美股年度财务数据，返回标准化 list[dict]。"""
@@ -535,6 +404,7 @@ def _fetch_financials_yf(code: str) -> list:
 
     reports = []
     for col in inc.columns[:5]:  # 最近 5 个财年
+
         def _get(row_name):
             if row_name in inc.index:
                 v = inc.loc[row_name, col]
@@ -559,30 +429,36 @@ def _fetch_financials_yf(code: str) -> list:
         if revenue and net_profit:
             net_margin = (net_profit / revenue) * 100
 
-        reports.append({
-            "REPORT_DATE": str(col.date()),
-            "revenue": revenue,
-            "revenue_growth": rev_growth,
-            "net_profit": net_profit,
-            "profit_growth": profit_growth,
-            "eps": _get("Diluted EPS") or _get("Basic EPS"),
-            "bps": None,
-            "roe": None,
-            "gross_margin": gross_margin,
-            "net_margin": net_margin,
-            "debt_ratio": None,
-            "ocf_per_share": None,
-            "operating_income": operating_income,
-        })
+        reports.append(
+            {
+                "REPORT_DATE": str(col.date()),
+                "revenue": revenue,
+                "revenue_growth": rev_growth,
+                "net_profit": net_profit,
+                "profit_growth": profit_growth,
+                "eps": _get("Diluted EPS") or _get("Basic EPS"),
+                "bps": None,
+                "roe": None,
+                "gross_margin": gross_margin,
+                "net_margin": net_margin,
+                "debt_ratio": None,
+                "ocf_per_share": None,
+                "operating_income": operating_income,
+            }
+        )
 
     # 补充增长率（用相邻年份计算）
     for i in range(len(reports) - 1):
         curr = reports[i]
         prev = reports[i + 1]
         if curr["revenue"] and prev["revenue"] and prev["revenue"] != 0:
-            curr["revenue_growth"] = ((curr["revenue"] - prev["revenue"]) / abs(prev["revenue"])) * 100
+            curr["revenue_growth"] = (
+                (curr["revenue"] - prev["revenue"]) / abs(prev["revenue"])
+            ) * 100
         if curr["net_profit"] and prev["net_profit"] and prev["net_profit"] != 0:
-            curr["profit_growth"] = ((curr["net_profit"] - prev["net_profit"]) / abs(prev["net_profit"])) * 100
+            curr["profit_growth"] = (
+                (curr["net_profit"] - prev["net_profit"]) / abs(prev["net_profit"])
+            ) * 100
 
     # 补充 ROE / BPS / 资产负债率（从 balance_sheet 和 info）
     try:
@@ -602,24 +478,6 @@ def _fetch_financials_yf(code: str) -> list:
 # ---------------------------------------------------------------------------
 # TickFlow 交叉验证（需 TICKFLOW_API_KEY 环境变量）
 # ---------------------------------------------------------------------------
-
-def _tickflow_symbol(code: str) -> str:
-    """将用户输入的代码转为 TickFlow 格式（600519.SH / AAPL.US / 00700.HK）。"""
-    c = code.strip()
-    cu = c.upper()
-    # 港股
-    if cu.endswith(".HK"):
-        num = cu[:-3]
-        return num.zfill(5) + ".HK"
-    if cu.startswith("HK") and cu[2:].isdigit():
-        return cu[2:].zfill(5) + ".HK"
-    # 美股
-    if cu.startswith("US") and len(cu) > 2 and not cu[2:].isdigit():
-        return cu[2:] + ".US"
-    # A股
-    code_clean = _normalize_code(c)
-    market = _market(code_clean)
-    return f"{code_clean}.{market}"
 
 
 def _fetch_tickflow_metrics(code: str) -> dict:
@@ -678,35 +536,45 @@ def _print_tickflow_crossval(code: str, primary_reports: list):
             p_v = p["roe"]
             diff = abs(tf_v - p_v)
             flag = "✅" if diff <= 1 else ("⚠️" if diff <= 5 else "❌")
-            comparisons.append(f"  ROE:        主源 {p_v:.2f}% | TickFlow {tf_v:.2f}% | 差异 {diff:.2f}% {flag}")
+            comparisons.append(
+                f"  ROE:        主源 {p_v:.2f}% | TickFlow {tf_v:.2f}% | 差异 {diff:.2f}% {flag}"
+            )
         # 毛利率
         if tf_data.get("gross_margin") is not None and p.get("gross_margin") is not None:
             tf_v = tf_data["gross_margin"]
             p_v = p["gross_margin"]
             diff = abs(tf_v - p_v)
             flag = "✅" if diff <= 1 else ("⚠️" if diff <= 5 else "❌")
-            comparisons.append(f"  毛利率:      主源 {p_v:.2f}% | TickFlow {tf_v:.2f}% | 差异 {diff:.2f}% {flag}")
+            comparisons.append(
+                f"  毛利率:      主源 {p_v:.2f}% | TickFlow {tf_v:.2f}% | 差异 {diff:.2f}% {flag}"
+            )
         # 净利率
         if tf_data.get("net_margin") is not None and p.get("net_margin") is not None:
             tf_v = tf_data["net_margin"]
             p_v = p["net_margin"]
             diff = abs(tf_v - p_v)
             flag = "✅" if diff <= 1 else ("⚠️" if diff <= 5 else "❌")
-            comparisons.append(f"  净利率:      主源 {p_v:.2f}% | TickFlow {tf_v:.2f}% | 差异 {diff:.2f}% {flag}")
+            comparisons.append(
+                f"  净利率:      主源 {p_v:.2f}% | TickFlow {tf_v:.2f}% | 差异 {diff:.2f}% {flag}"
+            )
         # EPS
         if tf_data.get("eps_basic") is not None and p.get("eps") is not None:
             tf_v = tf_data["eps_basic"]
             p_v = p["eps"]
             diff_pct = abs(tf_v - p_v) / max(abs(p_v), 0.01) * 100
             flag = "✅" if diff_pct <= 1 else ("⚠️" if diff_pct <= 5 else "❌")
-            comparisons.append(f"  EPS:        主源 {p_v:.2f} | TickFlow {tf_v:.2f} | 差异 {diff_pct:.1f}% {flag}")
+            comparisons.append(
+                f"  EPS:        主源 {p_v:.2f} | TickFlow {tf_v:.2f} | 差异 {diff_pct:.1f}% {flag}"
+            )
         # 资产负债率
         if tf_data.get("debt_to_asset_ratio") is not None and p.get("debt_ratio") is not None:
             tf_v = tf_data["debt_to_asset_ratio"]
             p_v = p["debt_ratio"]
             diff = abs(tf_v - p_v)
             flag = "✅" if diff <= 1 else ("⚠️" if diff <= 5 else "❌")
-            comparisons.append(f"  资产负债率:  主源 {p_v:.2f}% | TickFlow {tf_v:.2f}% | 差异 {diff:.2f}% {flag}")
+            comparisons.append(
+                f"  资产负债率:  主源 {p_v:.2f}% | TickFlow {tf_v:.2f}% | 差异 {diff:.2f}% {flag}"
+            )
 
         if comparisons:
             for line in comparisons:
@@ -733,6 +601,7 @@ def _print_tickflow_crossval(code: str, primary_reports: list):
 # financials 命令（统一入口）
 # ---------------------------------------------------------------------------
 
+
 def cmd_financials(code: str, no_cache=False):
     """核心财务数据（A股/港股/美股）。"""
     mkt_type = _detect_market_type(code)
@@ -746,8 +615,6 @@ def cmd_financials(code: str, no_cache=False):
     name = d.get("name", code) if d else code
 
     # 选择数据源
-    cache_key = f"financials-{_qq_code(code)}"
-
     def _fetch():
         if mkt_type == "A":
             # A股：优先 akshare THS，降级→东财 API
@@ -772,7 +639,10 @@ def cmd_financials(code: str, no_cache=False):
 
     try:
         reports, note = _cached_fetch(
-            "financials", _qq_code(code), _TTL_FINANCIALS, _fetch,
+            "financials",
+            _qq_code(code),
+            _TTL_FINANCIALS,
+            _fetch,
             no_cache=no_cache,
         )
     except (ConnectionError, json.JSONDecodeError, Exception) as e:
@@ -837,6 +707,7 @@ def cmd_financials(code: str, no_cache=False):
 # 日K线历史（腾讯 ifzq 接口，前复权收盘价；供估值分位/组合相关性计算使用）
 # ---------------------------------------------------------------------------
 
+
 def _fetch_kline(code: str, days: int = 250) -> list:
     """拉取日K收盘价序列，返回 [{date, close}]（旧→新）。
 
@@ -850,8 +721,7 @@ def _fetch_kline(code: str, days: int = 250) -> list:
     min_rows = max(5, min(days, 30) // 2)
     best = []
     for cand in candidates:
-        url = (f"https://web.ifzq.gtimg.cn/appstock/app/fqkline/get"
-               f"?param={cand},day,,,{days},qfq")
+        url = f"https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param={cand},day,,,{days},qfq"
         try:
             data = _curl_json(url)
         except (ConnectionError, json.JSONDecodeError):
@@ -868,8 +738,11 @@ def _fetch_kline(code: str, days: int = 250) -> list:
 def get_close_series(code: str, days: int = 250, no_cache=False):
     """带缓存的收盘价序列（供本工具 history 命令与 portfolio_calc 导入复用）。"""
     payload, note = _cached_fetch(
-        "kline", f"{_qq_code(code)}-{days}", _TTL_KLINE,
-        lambda: _fetch_kline(code, days), no_cache=no_cache,
+        "kline",
+        f"{_qq_code(code)}-{days}",
+        _TTL_KLINE,
+        lambda: _fetch_kline(code, days),
+        no_cache=no_cache,
     )
     return payload, note
 
@@ -881,18 +754,23 @@ def cmd_history(code: str, days: int = 250, as_json=False, no_cache=False):
         print(f"❌ 未获取到 {code} 的日K数据（检查代码格式：600519 / hk00700 / usAAPL）")
         sys.exit(1)
     if as_json:
-        print(json.dumps({"code": code, "days": len(series),
-                          "note": note or "", "series": series},
-                         ensure_ascii=False))
+        print(
+            json.dumps(
+                {"code": code, "days": len(series), "note": note or "", "series": series},
+                ensure_ascii=False,
+            )
+        )
         return
     closes = [s["close"] for s in series]
     print("=" * 60)
-    print(f"日K收盘价序列: {code}（前复权，{series[0]['date']} ~ {series[-1]['date']}，共 {len(series)} 个交易日）")
+    print(
+        f"日K收盘价序列: {code}（前复权，{series[0]['date']} ~ {series[-1]['date']}，共 {len(series)} 个交易日）"
+    )
     if note:
         print(f"⚠️ {note}")
     print("=" * 60)
     print(f"  区间最低/最高:  {min(closes):.2f} / {max(closes):.2f}")
-    print(f"  区间涨跌幅:     {(closes[-1]/closes[0]-1)*100:+.2f}%")
+    print(f"  区间涨跌幅:     {(closes[-1] / closes[0] - 1) * 100:+.2f}%")
     print(f"  最新收盘:       {closes[-1]:.2f}（{series[-1]['date']}）")
     print()
     print("  提示: 加 --json 可输出完整序列，供估值分位/相关性等下游计算使用")
@@ -901,6 +779,7 @@ def cmd_history(code: str, days: int = 250, as_json=False, no_cache=False):
 # ---------------------------------------------------------------------------
 # 搜索命令
 # ---------------------------------------------------------------------------
+
 
 def cmd_search(keyword: str):
     """搜索股票代码（东方财富搜索接口）。"""
@@ -934,6 +813,7 @@ def cmd_search(keyword: str):
 # CLI 入口
 # ---------------------------------------------------------------------------
 
+
 def main():
     parser = argparse.ArgumentParser(
         description="股票数据工具 — 腾讯行情 + akshare(A股财务) + yfinance(港美股财务)",
@@ -942,8 +822,7 @@ def main():
     sub = parser.add_subparsers(dest="command")
 
     common = argparse.ArgumentParser(add_help=False)
-    common.add_argument("--no-cache", action="store_true",
-                        help="跳过本地缓存，强制从接口直连取数")
+    common.add_argument("--no-cache", action="store_true", help="跳过本地缓存，强制从接口直连取数")
 
     p_quote = sub.add_parser("quote", help="实时行情（A股/港股/美股）", parents=[common])
     p_quote.add_argument("code", help="股票代码，如 600519 / hk00700 / usAAPL")
@@ -967,11 +846,19 @@ def main():
     if not args.command:
         # 打印依赖状态
         print("股票数据工具 — 依赖状态：")
-        print(f"  akshare:  {'✅ ' + ak.__version__ if _HAS_AKSHARE else '❌ 未安装 (pip install akshare)'}")
-        print(f"  yfinance: {'✅ ' + yf.__version__ if _HAS_YFINANCE else '❌ 未安装 (pip install yfinance)'}")
+        print(
+            f"  akshare:  {'✅ ' + ak.__version__ if _HAS_AKSHARE else '❌ 未安装 (pip install akshare)'}"
+        )
+        print(
+            f"  yfinance: {'✅ ' + yf.__version__ if _HAS_YFINANCE else '❌ 未安装 (pip install yfinance)'}"
+        )
         tf_status = "✅ 已安装" if _HAS_TICKFLOW else "❌ 未安装 (pip install tickflow)"
         if _HAS_TICKFLOW:
-            tf_status += " | API Key: " + ("✅ 已配置" if _TICKFLOW_API_KEY else "⚠️ 未设置 TICKFLOW_API_KEY（财务交叉验证不可用）")
+            tf_status += " | API Key: " + (
+                "✅ 已配置"
+                if _TICKFLOW_API_KEY
+                else "⚠️ 未设置 TICKFLOW_API_KEY（财务交叉验证不可用）"
+            )
         print(f"  tickflow: {tf_status}")
         print()
         parser.print_help()
@@ -994,7 +881,7 @@ def main():
             if token.startswith("http"):
                 domain = urlparse(token).netloc
                 break
-        print(f"❌ 接口请求失败（已重试 {_RETRIES} 次）: {msg}", file=sys.stderr)
+        print(f"❌ 接口请求失败（已重试 1 次）: {msg}", file=sys.stderr)
         if domain:
             print(f"   失败域名: {domain}", file=sys.stderr)
         print("   降级路径（按 skills/financial-data/SKILL.md 回退顺序）：", file=sys.stderr)

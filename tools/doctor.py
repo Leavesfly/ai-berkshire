@@ -5,7 +5,7 @@
 可用、哪些需要降级，替代根 SKILL.md「执行环境自检」节的手工核对。
 
 检查项：
-    1. Python 版本 >= 3.8
+    1. Python 版本 >= 3.9
     2. curl 可用（ashare_data.py 取数依赖）
     3. 关键数据源域名连通性（腾讯行情 / 东方财富 / macrotrends / SEC EDGAR）
     4. 核心工具脚本可编译（含财报管道/决策日志/观察清单/筛选/组合计算等全量工具）
@@ -26,66 +26,108 @@ import subprocess
 import sys
 import tempfile
 
-_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-_PROBE_TIMEOUT = 8
+from core.config import PROBE_TIMEOUT as _PROBE_TIMEOUT
+from utils import _CURL_PATH
 
-# (检查项, 通过时说明, 失败时降级建议)
-_CORE_TOOLS = [
-    "financial_rigor.py",
-    "report_audit.py",
-    "report_export.py",
-    "ashare_data.py",
-    "chart_gen.py",
-    "morningstar_fair_value.py",
-    "filings_fetch.py",
-    "filings_parse.py",
-    "masters_portfolio.py",
-    "decision_log.py",
-    "watchlist.py",
-    "quality_screen.py",
-    "portfolio_calc.py",
-    "company_facts.py",
-]
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def _load_core_tools():
+    """从 plugin.json 动态读取工具列表（单一来源，避免手动同步）。"""
+    import json
+
+    plugin_path = os.path.join(_ROOT, ".claude-plugin", "plugin.json")
+    try:
+        with open(plugin_path, encoding="utf-8") as f:
+            plugin = json.load(f)
+        # 提取 tools 列表中的文件名（去掉 tools/ 前缀）
+        return [os.path.basename(t) for t in plugin.get("tools", [])]
+    except (OSError, json.JSONDecodeError):
+        # 回退到硬编码列表（容错）
+        return [
+            "financial_rigor.py",
+            "report_audit.py",
+            "report_export.py",
+            "ashare_data.py",
+            "chart_gen.py",
+            "morningstar_fair_value.py",
+            "filings_fetch.py",
+            "filings_parse.py",
+            "masters_portfolio.py",
+            "decision_log.py",
+            "watchlist.py",
+            "quality_screen.py",
+            "portfolio_calc.py",
+            "company_facts.py",
+        ]
+
+
+_CORE_TOOLS = _load_core_tools()
 
 _PROBE_URLS = [
-    ("腾讯行情 qt.gtimg.cn", "https://qt.gtimg.cn/q=sh600519",
-     "A股/港股/美股程序化行情不可用 → 走网页源（东财/aastocks/macrotrends）"),
-    ("东方财富 eastmoney.com", "https://datacenter.eastmoney.com/",
-     "A股财务接口不可用 → 走巨潮/新浪网页源或过期缓存"),
-    ("macrotrends.net", "https://macrotrends.net/",
-     "美股主源不可用 → 换 stockanalysis/wsj，见 financial-data 轮换顺序"),
-    ("SEC EDGAR sec.gov", "https://www.sec.gov/files/company_tickers.json",
-     "美股财报原文管道不可用 → filings_fetch 降级 WebSearch「公司名 + 10-K」"),
+    (
+        "腾讯行情 qt.gtimg.cn",
+        "https://qt.gtimg.cn/q=sh600519",
+        "A股/港股/美股程序化行情不可用 → 走网页源（东财/aastocks/macrotrends）",
+    ),
+    (
+        "东方财富 eastmoney.com",
+        "https://datacenter.eastmoney.com/",
+        "A股财务接口不可用 → 走巨潮/新浪网页源或过期缓存",
+    ),
+    (
+        "macrotrends.net",
+        "https://macrotrends.net/",
+        "美股主源不可用 → 换 stockanalysis/wsj，见 financial-data 轮换顺序",
+    ),
+    (
+        "SEC EDGAR sec.gov",
+        "https://www.sec.gov/files/company_tickers.json",
+        "美股财报原文管道不可用 → filings_fetch 降级 WebSearch「公司名 + 10-K」",
+    ),
 ]
 
 
 def _check_python():
-    ok = sys.version_info >= (3, 8)
+    ok = sys.version_info >= (3, 9)
     detail = f"Python {sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
-    advice = "升级到 Python >= 3.8，否则 tools/ 全部不可用 → 验算降级为双源人工比对"
+    advice = "升级到 Python >= 3.9，否则 tools/ 全部不可用 → 验算降级为双源人工比对"
     return ok, detail, advice
 
 
 def _check_curl():
     try:
-        r = subprocess.run(["/usr/bin/curl", "--version"],
-                           capture_output=True, timeout=5)
+        r = subprocess.run([_CURL_PATH, "--version"], capture_output=True, timeout=5)
         ok = r.returncode == 0
     except (OSError, subprocess.TimeoutExpired):
         ok = False
     advice = "curl 缺失 → ashare_data.py/morningstar 取数不可用，改走 WebFetch 网页源"
-    return ok, "/usr/bin/curl", advice
+    return ok, _CURL_PATH, advice
 
 
 def _probe_url(url):
     """HEAD 探测域名连通性（跟随跳转，只看能否建立响应）。"""
     try:
         r = subprocess.run(
-            ["/usr/bin/curl", "-s", "-o", "/dev/null", "-w", "%{http_code}",
-             "--noproxy", "*", "-m", str(_PROBE_TIMEOUT), "-I", "-L",
-             "-H", "User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
-             url],
-            capture_output=True, timeout=_PROBE_TIMEOUT + 4,
+            [
+                _CURL_PATH,
+                "-s",
+                "-o",
+                "/dev/null",
+                "-w",
+                "%{http_code}",
+                "--noproxy",
+                "*",
+                "-m",
+                str(_PROBE_TIMEOUT),
+                "-I",
+                "-L",
+                "-H",
+                "User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
+                url,
+            ],
+            capture_output=True,
+            timeout=_PROBE_TIMEOUT + 4,
         )
         code = r.stdout.decode().strip()
         # 任何 HTTP 响应（含 403/405，说明网络通、仅方法受限）都算连通
@@ -110,7 +152,8 @@ def _check_akshare():
     try:
         r = subprocess.run(
             [sys.executable, "-c", "import akshare; print(akshare.__version__)"],
-            capture_output=True, timeout=30,
+            capture_output=True,
+            timeout=30,
         )
         if r.returncode == 0:
             return True, f"akshare {r.stdout.decode().strip()}", ""
@@ -125,7 +168,8 @@ def _check_yfinance():
     try:
         r = subprocess.run(
             [sys.executable, "-c", "import yfinance; print(yfinance.__version__)"],
-            capture_output=True, timeout=30,
+            capture_output=True,
+            timeout=30,
         )
         if r.returncode == 0:
             return True, f"yfinance {r.stdout.decode().strip()}", ""
@@ -140,16 +184,21 @@ def _check_tickflow():
     try:
         r = subprocess.run(
             [sys.executable, "-c", "import tickflow; print(tickflow.__version__)"],
-            capture_output=True, timeout=30,
+            capture_output=True,
+            timeout=30,
         )
         if r.returncode == 0:
             ver = r.stdout.decode().strip()
             has_key = bool(os.environ.get("TICKFLOW_API_KEY", ""))
-            detail = f"tickflow {ver}" + (" | API Key ✅" if has_key else " | API Key 未设置（交叉验证不可用）")
+            detail = f"tickflow {ver}" + (
+                " | API Key ✅" if has_key else " | API Key 未设置（交叉验证不可用）"
+            )
             return True, detail, ""
     except (OSError, subprocess.TimeoutExpired):
         pass
-    advice = "财务交叉验证不可用（不影响主源取数）；安装：pip install tickflow，并设置 TICKFLOW_API_KEY"
+    advice = (
+        "财务交叉验证不可用（不影响主源取数）；安装：pip install tickflow，并设置 TICKFLOW_API_KEY"
+    )
     return False, "", advice
 
 
@@ -158,7 +207,8 @@ def _check_matplotlib():
     try:
         r = subprocess.run(
             [sys.executable, "-c", "import matplotlib; print(matplotlib.__version__)"],
-            capture_output=True, timeout=30,
+            capture_output=True,
+            timeout=30,
         )
         if r.returncode == 0:
             return True, f"matplotlib {r.stdout.decode().strip()}", ""
@@ -173,7 +223,8 @@ def _check_pypdf():
     try:
         r = subprocess.run(
             [sys.executable, "-c", "import pypdf; print(pypdf.__version__)"],
-            capture_output=True, timeout=30,
+            capture_output=True,
+            timeout=30,
         )
         if r.returncode == 0:
             return True, f"pypdf {r.stdout.decode().strip()}", ""
@@ -194,6 +245,31 @@ def _check_reports_writable():
         return False, f"reports/ 不可写: {e}", "检查目录权限；仍失败则报告输出到对话中"
 
 
+def _check_registry_integrity():
+    """校验 skills/registry.json 中声明的工具文件均存在。"""
+    import json
+
+    registry_path = os.path.join(_ROOT, "skills", "registry.json")
+    if not os.path.exists(registry_path):
+        return False, "skills/registry.json 缺失", "从仓库恢复该文件"
+    try:
+        with open(registry_path, encoding="utf-8") as f:
+            registry = json.load(f)
+    except (json.JSONDecodeError, OSError) as e:
+        return False, f"registry.json 解析失败: {e}", "修复 JSON 格式"
+
+    missing = set()
+    for skill in registry.get("skills", []):
+        for tool in skill.get("tools_required", []):
+            tool_path = os.path.join(_ROOT, "tools", tool)
+            if not os.path.exists(tool_path):
+                missing.add(tool)
+    if missing:
+        return False, f"注册表引用工具缺失: {', '.join(sorted(missing))}", "恢复缺失工具文件"
+    count = len(registry.get("skills", []))
+    return True, f"{count} 个技能注册完整", ""
+
+
 def main():
     print("=" * 66)
     print("AI Berkshire 环境自检 (doctor)")
@@ -203,7 +279,7 @@ def main():
     degraded = False
 
     ok, detail, advice = _check_python()
-    rows.append(("✅" if ok else "❌", "Python >= 3.8", detail if ok else f"{detail} → {advice}"))
+    rows.append(("✅" if ok else "❌", "Python >= 3.9", detail if ok else f"{detail} → {advice}"))
     degraded |= not ok
 
     ok, detail, advice = _check_curl()
@@ -222,7 +298,9 @@ def main():
 
     for name in _CORE_TOOLS:
         ok, detail, advice = _check_tool_compile(name)
-        rows.append(("✅" if ok else "❌", f"工具编译: {name}", detail if ok else f"{detail} → {advice}"))
+        rows.append(
+            ("✅" if ok else "❌", f"工具编译: {name}", detail if ok else f"{detail} → {advice}")
+        )
         degraded |= not ok
 
     ok, detail, advice = _check_akshare()
@@ -247,6 +325,10 @@ def main():
 
     ok, detail, advice = _check_reports_writable()
     rows.append(("✅" if ok else "⚠️", "报告目录可写", detail if ok else f"{detail} → {advice}"))
+    degraded |= not ok
+
+    ok, detail, advice = _check_registry_integrity()
+    rows.append(("✅" if ok else "❌", "技能注册表完整性", detail if ok else f"{detail} → {advice}"))
     degraded |= not ok
 
     width = max(len(r[1]) for r in rows) + 2

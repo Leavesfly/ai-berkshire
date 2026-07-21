@@ -1,6 +1,10 @@
 ---
 name: earnings-review
 description: 财报精读——基于一手资料（财报原文、SEC/HKEX/巨潮披露）对公司最新财报做深度解读与数据校验。当用户想深读某公司季报/年报、解读财报数字、验证财务数据或做单人财报分析时使用。
+type: executable
+confirm_level: light
+tools_required: [filings_fetch.py, filings_parse.py, financial_rigor.py, report_audit.py]
+depends_on: [financial-data]
 ---
 
 # 财报精读：一手资料深度解读
@@ -223,22 +227,7 @@ python3 tools/financial_rigor.py benford --values '[金额1, 金额2, ...]'
 
 ### 第八步：数据抽检（准出流程）
 
-报告写入后，执行数据抽检，通过方可发布：
-
-```bash
-# Step 1 — 提取抽检清单
-python3 tools/report_audit.py extract \
-  --report reports/{公司名}/{公司名}-earnings-review-{期间}.md
-
-# Step 2 — 对清单每项从可靠信源取数（参见 skills/financial-data/SKILL.md）
-
-# Step 3 — 输出准出/打回判决
-python3 tools/report_audit.py verdict \
-  --results '<填好的JSON>' \
-  --report {报告文件名}
-```
-
-**【准出】** 全部通过 → 发布；**【打回】** 有不通过 → 修正后重审。
+报告写入后，按 [`references/audit-protocol.md`](../../references/audit-protocol.md) 执行数据抽检，通过方可发布。
 
 ## 关键原则
 

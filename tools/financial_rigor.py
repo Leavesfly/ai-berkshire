@@ -19,7 +19,7 @@
    12. DCF 敏感性   —— 增长率×贴现率二维内在价值矩阵
 
 设计原则：零外部依赖，仅使用 Python 标准库（decimal/json/math/argparse），
-要求 Python >= 3.7；所有计算基于 decimal.Decimal，结果可审计、可复现。
+要求 Python >= 3.9；所有计算基于 decimal.Decimal，结果可审计、可复现。
 
 用法（通常由 Skills 自动调用，无需手动执行）：
     python3 tools/financial_rigor.py verify-market-cap --price 510 --shares 9.11e9 --reported 4.65e12 --currency HKD
@@ -36,65 +36,36 @@
 """
 
 import argparse
-import json
 import math
 import sys
-from decimal import Decimal, Context, ROUND_HALF_EVEN
+from decimal import Decimal
 
-# 退出码约定（供调用脚本判断）：0=验证通过 / 1=验证不通过（重大偏差） / 2=参数错误
-EXIT_OK = 0
-EXIT_VERIFY_FAIL = 1
-EXIT_BAD_ARGS = 2
-
-
-def _load_json_arg(raw: str, what: str, example: str):
-    """解析命令行 JSON 参数；失败时输出友好错误并以退出码 2 结束（不抛 traceback）。"""
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError as e:
-        print(f"❌ {what} 不是合法 JSON: {e}")
-        print(f"   正确格式示例: {example}")
-        print("   提示: shell 中整体用单引号包裹，内部键名用双引号")
-        sys.exit(EXIT_BAD_ARGS)
-
-# ---------------------------------------------------------------------------
-# 精确十进制引擎（避免浮点漂移）
-# ---------------------------------------------------------------------------
-
-_CTX = Context(prec=28, rounding=ROUND_HALF_EVEN)
-
-
-def exact(value) -> Decimal:
-    """将任意数值转换为精确的 Decimal，规避浮点数陷阱。
-
-    统一先转成字符串再构造 Decimal（如 0.1 → "0.1"），
-    避免 Decimal(0.1) 产生的二进制误差。
-    """
-    if isinstance(value, Decimal):
-        return value
-    return Decimal(str(value))
-
-
-def fmt_number(d: Decimal, unit: str = "") -> str:
-    """将大额数字格式化为易读形式（亿 / 万亿 / B / T）。"""
-    v = float(d)
-    abs_v = abs(v)
-    if unit in ("亿", "亿元", "亿港元", "亿美元"):
-        if abs_v >= 10000:
-            return f"{v/10000:.2f}万亿{unit[1:] if len(unit) > 1 else ''}"
-        return f"{v:.2f}{unit}"
-    if abs_v >= 1e12:
-        return f"{v/1e12:.2f}T"
-    if abs_v >= 1e9:
-        return f"{v/1e9:.2f}B"
-    if abs_v >= 1e6:
-        return f"{v/1e6:.2f}M"
-    return f"{v:,.2f}"
-
+from core.analysis import (
+    compute_accruals as _compute_accruals,
+)
+from core.analysis import (
+    compute_altman_z as _compute_altman_z,
+)
+from core.analysis import (
+    compute_kelly as _compute_kelly,
+)
+from core.analysis import (
+    compute_m_score as _compute_m_score,
+)
+from core.analysis import (
+    compute_owner_earnings as _compute_owner_earnings,
+)
+from core.exceptions import CalculationError
+from core.valuation import CTX as _CTX
+from core.valuation import exact, fmt_number
+from utils import EXIT_BAD_ARGS, EXIT_OK, EXIT_VERIFY_FAIL
+from utils import cli_entry as _cli_entry
+from utils import load_json_arg as _load_json_arg
 
 # ---------------------------------------------------------------------------
 # 1. Market Cap Verification (股价×总股本 vs 报告市值)
 # ---------------------------------------------------------------------------
+
 
 def verify_market_cap(price, shares, reported_cap, currency=""):
     """验算市值：计算「股价 × 总股本」并与报告市值比对，偏差 > 5% 判为不通过。"""
@@ -117,9 +88,9 @@ def verify_market_cap(price, shares, reported_cap, currency=""):
 
     if deviation > 5:
         print(f"  ❌ 警告: 偏差 {deviation:.1f}% > 5%, 请检查:")
-        print(f"     - 股本是否为最新（回购/增发）?")
-        print(f"     - 单位是否一致（港币 vs 人民币 vs 美元）?")
-        print(f"     - 股价是否为最新?")
+        print("     - 股本是否为最新（回购/增发）?")
+        print("     - 单位是否一致（港币 vs 人民币 vs 美元）?")
+        print("     - 股价是否为最新?")
         return False
     elif deviation > 1:
         print(f"  ⚠️  偏差 {deviation:.1f}% 在可接受范围, 可能因股价波动/股本变化")
@@ -133,8 +104,10 @@ def verify_market_cap(price, shares, reported_cap, currency=""):
 # 2. Valuation Metrics Verification (估值指标验算)
 # ---------------------------------------------------------------------------
 
-def verify_valuation(price, eps=None, bvps=None, fcf_per_share=None,
-                     dividend=None, revenue_per_share=None):
+
+def verify_valuation(
+    price, eps=None, bvps=None, fcf_per_share=None, dividend=None, revenue_per_share=None
+):
     """从原始数据精确推导并验证关键估值指标（PE/PB/ROE/P-FCF/股息率/PS）。"""
     p = exact(price)
 
@@ -156,7 +129,7 @@ def verify_valuation(price, eps=None, bvps=None, fcf_per_share=None,
             ey = _CTX.divide(e, p) * 100
             print(f"  盈利收益率: {ey:.2f}%")
         else:
-            print(f"  PE: EPS为0, 无法计算")
+            print("  PE: EPS为0, 无法计算")
 
     if bvps is not None:
         b = exact(bvps)
@@ -202,6 +175,7 @@ def verify_valuation(price, eps=None, bvps=None, fcf_per_share=None,
 # 3. Cross-Source Data Validation (多源交叉验证)
 # ---------------------------------------------------------------------------
 
+
 def cross_validate(field_name, source_values: dict, unit="", tolerance_pct=1.0):
     """多源交叉验证：以中位数为基准比对各信源数值。
 
@@ -223,8 +197,7 @@ def cross_validate(field_name, source_values: dict, unit="", tolerance_pct=1.0):
     try:
         values = {k: exact(v) for k, v in source_values.items()}
     except Exception:
-        bad = {k: v for k, v in source_values.items()
-               if not isinstance(v, (int, float))}
+        bad = {k: v for k, v in source_values.items() if not isinstance(v, (int, float))}
         print(f"  ❌ 存在非数值的来源数据: {bad}")
         print("     每个来源的值必须是数字（不要带单位/逗号/百分号）")
         sys.exit(EXIT_BAD_ARGS)
@@ -234,7 +207,9 @@ def cross_validate(field_name, source_values: dict, unit="", tolerance_pct=1.0):
     # Find median as reference
     sorted_vals = sorted(float(v) for v in nums)
     n = len(sorted_vals)
-    median = sorted_vals[n // 2] if n % 2 == 1 else (sorted_vals[n//2-1] + sorted_vals[n//2]) / 2
+    median = (
+        sorted_vals[n // 2] if n % 2 == 1 else (sorted_vals[n // 2 - 1] + sorted_vals[n // 2]) / 2
+    )
 
     print(f"  数据来源数: {len(sources)}")
     print(f"  参考中位数: {fmt_number(exact(median))} {unit}")
@@ -258,22 +233,28 @@ def cross_validate(field_name, source_values: dict, unit="", tolerance_pct=1.0):
     if all_ok and not has_warn:
         print(f"  ✅ 所有来源偏差 ≤ {tolerance_pct}%, 数据一致")
     elif all_ok:
-        print(f"  ⚠️  存在来源偏差在 {tolerance_pct}%~5% 之间, 请标注差异及可能原因（GAAP/Non-GAAP、汇率、财年口径）")
+        print(
+            f"  ⚠️  存在来源偏差在 {tolerance_pct}%~5% 之间, 请标注差异及可能原因（GAAP/Non-GAAP、汇率、财年口径）"
+        )
     else:
-        print(f"  ❌ 存在来源偏差 > 5%, 属重大差异, 不得直接使用")
-        print(f"     必须查原始财报核实; 优先采用公司年报/交易所数据")
+        print("  ❌ 存在来源偏差 > 5%, 属重大差异, 不得直接使用")
+        print("     必须查原始财报核实; 优先采用公司年报/交易所数据")
 
     # Consensus value
     consensus = median
     print(f"\n  共识值 (加权中位数): {fmt_number(exact(consensus))} {unit}")
-    return {"consensus": consensus, "all_consistent": all_ok and not has_warn, "has_major_diff": not all_ok}
+    return {
+        "consensus": consensus,
+        "all_consistent": all_ok and not has_warn,
+        "has_major_diff": not all_ok,
+    }
 
 
 # ---------------------------------------------------------------------------
 # 4. Benford's Law Quick Check (财务数据造假检测)
 # ---------------------------------------------------------------------------
 
-_BENFORD = {d: math.log10(1 + 1/d) for d in range(1, 10)}
+_BENFORD = {d: math.log10(1 + 1 / d) for d in range(1, 10)}
 
 
 def benford_check(values: list):
@@ -331,7 +312,7 @@ def benford_check(values: list):
 
     # Digit distribution table
     print(f"  {'首位数':>6} {'观测':>8} {'Benford期望':>12} {'偏差':>8}")
-    print(f"  {'-'*6} {'-'*8} {'-'*12} {'-'*8}")
+    print(f"  {'-' * 6} {'-' * 8} {'-' * 12} {'-' * 8}")
     for d in range(1, 10):
         obs = observed.get(d, 0)
         exp = _BENFORD[d]
@@ -354,11 +335,51 @@ def benford_check(values: list):
 # 5. Exact Calculator (精确计算器)
 # ---------------------------------------------------------------------------
 
+
+def _safe_eval_ast(node):
+    """递归求值 AST 节点，仅支持四则运算与数字（彻底消除 eval 风险）。"""
+    import ast
+
+    if isinstance(node, ast.Expression):
+        return _safe_eval_ast(node.body)
+    if isinstance(node, ast.Constant):  # 数字/字符串常量
+        if isinstance(node.value, (int, float)):
+            return node.value
+        raise CalculationError(f"不支持的常量类型: {type(node.value)}")
+    if isinstance(node, ast.Num):  # 已废弃，保留以防边缘情况
+        return node.n
+    if isinstance(node, ast.UnaryOp):
+        operand = _safe_eval_ast(node.operand)
+        if isinstance(node.op, ast.UAdd):
+            return +operand
+        if isinstance(node.op, ast.USub):
+            return -operand
+        raise CalculationError(f"不支持的一元运算符: {type(node.op)}")
+    if isinstance(node, ast.BinOp):
+        left = _safe_eval_ast(node.left)
+        right = _safe_eval_ast(node.right)
+        if isinstance(node.op, ast.Add):
+            return left + right
+        if isinstance(node.op, ast.Sub):
+            return left - right
+        if isinstance(node.op, ast.Mult):
+            return left * right
+        if isinstance(node.op, ast.Div):
+            if right == 0:
+                raise ZeroDivisionError("除数为零")
+            return left / right
+        raise CalculationError(f"不支持的二元运算符: {type(node.op)}")
+    raise CalculationError(f"不支持的表达式节点: {type(node)}")
+
+
 def exact_calc(expr: str):
     """Evaluate a financial expression with exact decimal arithmetic.
 
     Supports: +, -, *, /, (), numbers (including scientific notation).
+    使用 AST 解析而非 eval，彻底消除代码注入风险。
     """
+    import ast
+
     print("=" * 60)
     print("精确计算 (Exact Calculator)")
     print("=" * 60)
@@ -375,8 +396,8 @@ def exact_calc(expr: str):
         return None
 
     try:
-        # 表达式已通过字符白名单校验，此处禁用内建函数后安全求值
-        result = eval(expr, {"__builtins__": {}}, {})
+        tree = ast.parse(expr, mode="eval")
+        result = _safe_eval_ast(tree)
         d_result = exact(result)
         print(f"  表达式: {expr}")
         print(f"  结果:   {fmt_number(d_result)}")
@@ -391,10 +412,20 @@ def exact_calc(expr: str):
 # 6. Three-Scenario Valuation (三情景估值)
 # ---------------------------------------------------------------------------
 
-def three_scenario_valuation(current_price, current_eps, shares_billion,
-                             growth_optimistic, growth_neutral, growth_pessimistic,
-                             pe_optimistic, pe_neutral, pe_pessimistic,
-                             years=3, currency=""):
+
+def three_scenario_valuation(
+    current_price,
+    current_eps,
+    shares_billion,
+    growth_optimistic,
+    growth_neutral,
+    growth_pessimistic,
+    pe_optimistic,
+    pe_neutral,
+    pe_pessimistic,
+    years=3,
+    currency="",
+):
     """三情景估值：按乐观/中性/悲观的增速与目标 PE，精确推演各情景目标股价。"""
     print("=" * 60)
     print("三情景估值模型 (Three-Scenario Valuation)")
@@ -402,13 +433,15 @@ def three_scenario_valuation(current_price, current_eps, shares_billion,
 
     p = exact(current_price)
     eps = exact(current_eps)
-    shares = exact(shares_billion)
+    # shares_billion 保留为 CLI 兼容参数，当前计算未使用
 
     # 防御：增速应为小数（如 0.15 = 15%）；若绝对值 > 1.5 则判定为误传百分数，自动换算并提示
     def _normalize_growth(g):
         g = float(g)
         if abs(g) > 1.5:
-            print(f"  ⚠️  增速 {g} 疑似以百分数传入，已自动换算为 {g/100}（正确格式：0.15 表示 15%）")
+            print(
+                f"  ⚠️  增速 {g} 疑似以百分数传入，已自动换算为 {g / 100}（正确格式：0.15 表示 15%）"
+            )
             return g / 100
         return g
 
@@ -426,8 +459,10 @@ def three_scenario_valuation(current_price, current_eps, shares_billion,
     print(f"  当前EPS:  {eps}")
     print(f"  预测期:   {years}年")
     print()
-    print(f"  {'情景':12} {'年增速':>8} {'目标PE':>8} {'目标EPS':>10} {'目标股价':>10} {'涨跌幅':>8}")
-    print(f"  {'-'*12} {'-'*8} {'-'*8} {'-'*10} {'-'*10} {'-'*8}")
+    print(
+        f"  {'情景':12} {'年增速':>8} {'目标PE':>8} {'目标EPS':>10} {'目标股价':>10} {'涨跌幅':>8}"
+    )
+    print(f"  {'-' * 12} {'-' * 8} {'-' * 8} {'-' * 10} {'-' * 10} {'-' * 8}")
 
     for name, growth, pe in scenarios:
         g = exact(growth)
@@ -439,8 +474,10 @@ def three_scenario_valuation(current_price, current_eps, shares_billion,
         target_price = _CTX.multiply(future_eps, target_pe)
         change = float(target_price - p) / float(p) * 100
 
-        print(f"  {name:12} {float(g)*100:>7.0f}% {float(target_pe):>7.0f}x "
-              f"{float(future_eps):>10.2f} {float(target_price):>9.1f} {change:>+7.1f}%")
+        print(
+            f"  {name:12} {float(g) * 100:>7.0f}% {float(target_pe):>7.0f}x "
+            f"{float(future_eps):>10.2f} {float(target_price):>9.1f} {change:>+7.1f}%"
+        )
 
     print()
     print("  ✅ 所有计算使用精确十进制, 结果可审计复现")
@@ -449,6 +486,7 @@ def three_scenario_valuation(current_price, current_eps, shares_billion,
 # ---------------------------------------------------------------------------
 # 7. CAGR 复合年增长率
 # ---------------------------------------------------------------------------
+
 
 def cagr_calc(begin, end, years):
     """CAGR = (期末/期初)^(1/年数) - 1，精确计算复合年增长率。"""
@@ -472,7 +510,7 @@ def cagr_calc(begin, end, years):
     print(f"  期末值:     {fmt_number(exact(end))}")
     print(f"  年数:       {years}")
     print(f"  累计增幅:   {total:+.2f}%")
-    print(f"  CAGR:       {cagr*100:+.2f}%/年")
+    print(f"  CAGR:       {cagr * 100:+.2f}%/年")
     print()
     print("  ✅ 精确计算, 可审计复现")
     return cagr
@@ -482,8 +520,10 @@ def cagr_calc(begin, end, years):
 # 8. 股东盈余 (Owner Earnings, 巴菲特 1986 致股东信定义)
 # ---------------------------------------------------------------------------
 
-def owner_earnings(net_income, depreciation, maintenance_capex,
-                   working_capital_change=None, shares=None):
+
+def owner_earnings(
+    net_income, depreciation, maintenance_capex, working_capital_change=None, shares=None
+):
     """股东盈余 = 净利润 + 折旧摊销 − 维持性资本开支 (− 营运资本增加，可选)。"""
     print("=" * 60)
     print("股东盈余 (Owner Earnings, 巴菲特定义)")
@@ -493,14 +533,14 @@ def owner_earnings(net_income, depreciation, maintenance_capex,
     dep = exact(depreciation)
     capex = exact(maintenance_capex)
 
-    oe = _CTX.add(ni, dep) - capex
+    # 委托 core 计算
+    oe = _compute_owner_earnings(net_income, depreciation, maintenance_capex, working_capital_change)
+
     print(f"  净利润:             {fmt_number(ni)}")
     print(f"  + 折旧摊销:         {fmt_number(dep)}")
     print(f"  - 维持性资本开支:   {fmt_number(capex)}")
     if working_capital_change is not None:
-        wc = exact(working_capital_change)
-        oe = oe - wc
-        print(f"  - 营运资本增加:     {fmt_number(wc)}")
+        print(f"  - 营运资本增加:     {fmt_number(exact(working_capital_change))}")
     print(f"  = 股东盈余:         {fmt_number(oe)}")
 
     if shares is not None and float(shares) > 0:
@@ -525,6 +565,7 @@ def owner_earnings(net_income, depreciation, maintenance_capex,
 # 9. 反向 DCF (从当前市值反解隐含增长率)
 # ---------------------------------------------------------------------------
 
+
 def reverse_dcf(market_cap, fcf, discount_rate, terminal_growth, years=10):
     """二分法反解：当前市值隐含的未来 N 年 FCF 年增长率。
 
@@ -540,10 +581,12 @@ def reverse_dcf(market_cap, fcf, discount_rate, terminal_growth, years=10):
         print("     提示: FCF 为负的公司不适用反向 DCF，改用情景分析（three-scenario）")
         sys.exit(EXIT_BAD_ARGS)
     if not (0 < discount_rate < 1) or not (0 <= terminal_growth < 1):
-        print(f"  ❌ 贴现率/永续增长率应为小数形式（如 0.10 表示 10%）")
+        print("  ❌ 贴现率/永续增长率应为小数形式（如 0.10 表示 10%）")
         sys.exit(EXIT_BAD_ARGS)
     if discount_rate <= terminal_growth:
-        print(f"  ❌ 贴现率（{discount_rate}）必须大于永续增长率（{terminal_growth}），否则终值发散")
+        print(
+            f"  ❌ 贴现率（{discount_rate}）必须大于永续增长率（{terminal_growth}），否则终值发散"
+        )
         sys.exit(EXIT_BAD_ARGS)
     if years <= 0:
         print(f"  ❌ 预测期年数必须为正整数（years={years}）")
@@ -567,10 +610,10 @@ def reverse_dcf(market_cap, fcf, discount_rate, terminal_growth, years=10):
     lo, hi = -0.50, 1.00
     target = float(market_cap)
     if dcf_value(lo) > target:
-        print(f"  ℹ️ 当前市值极低：即使 FCF 每年衰退 50% 现值仍高于市值，隐含增长率 < -50%")
+        print("  ℹ️ 当前市值极低：即使 FCF 每年衰退 50% 现值仍高于市值，隐含增长率 < -50%")
         sys.exit(EXIT_OK)
     if dcf_value(hi) < target:
-        print(f"  ⚠️ 当前市值隐含增长率 > 100%/年，远超任何可持续增长，估值存在极端预期")
+        print("  ⚠️ 当前市值隐含增长率 > 100%/年，远超任何可持续增长，估值存在极端预期")
         sys.exit(EXIT_VERIFY_FAIL)
 
     for _ in range(100):  # 二分法，收敛至 1e-8 以内
@@ -583,11 +626,11 @@ def reverse_dcf(market_cap, fcf, discount_rate, terminal_growth, years=10):
 
     print(f"  当前市值:           {fmt_number(exact(market_cap))}")
     print(f"  当前 FCF:           {fmt_number(exact(fcf))}")
-    print(f"  贴现率:             {r*100:.1f}%")
-    print(f"  永续增长率:         {gt*100:.1f}%")
+    print(f"  贴现率:             {r * 100:.1f}%")
+    print(f"  永续增长率:         {gt * 100:.1f}%")
     print(f"  预测期:             {years} 年")
     print()
-    print(f"  → 市场隐含增长率:   {implied*100:+.2f}%/年（未来 {years} 年 FCF 年均增速）")
+    print(f"  → 市场隐含增长率:   {implied * 100:+.2f}%/年（未来 {years} 年 FCF 年均增速）")
     print()
     print("  解读参考（四大师视角：市场预期是否苛刻）：")
     if implied <= 0.05:
@@ -603,6 +646,7 @@ def reverse_dcf(market_cap, fcf, discount_rate, terminal_growth, years=10):
 # ---------------------------------------------------------------------------
 # 10. 估值分位 (当前估值在历史序列中的百分位)
 # ---------------------------------------------------------------------------
+
 
 def valuation_percentile(metric, current, history: list):
     """计算当前估值在历史序列中的百分位（便宜/贵的历史坐标系）。
@@ -656,6 +700,7 @@ def valuation_percentile(metric, current, history: list):
 # 11. 同业对标 (目标公司 vs 可比公司)
 # ---------------------------------------------------------------------------
 
+
 def peer_compare(target: dict, peers: list):
     """目标公司与可比公司的估值/质量指标对标，量化溢价/折价。
 
@@ -673,16 +718,19 @@ def peer_compare(target: dict, peers: list):
         print("  ❌ --peers 至少需要 2 家可比公司（建议 3-5 家）")
         sys.exit(EXIT_BAD_ARGS)
 
-    metrics = [k for k, v in target.items()
-               if k != "name" and isinstance(v, (int, float))]
+    metrics = [k for k, v in target.items() if k != "name" and isinstance(v, (int, float))]
     if not metrics:
         print("  ❌ target 中无数值指标可对比")
         sys.exit(EXIT_BAD_ARGS)
 
-    names = [target["name"]] + [p.get("name", f"peer{i+1}") for i, p in enumerate(peers)]
+    names = [target["name"]] + [p.get("name", f"peer{i + 1}") for i, p in enumerate(peers)]
     col_w = max(10, max(len(str(n)) for n in names) + 2)
 
-    header = f"  {'指标':8}" + "".join(f"{n:>{col_w}}" for n in names) + f"{'同业中位':>10}{'溢价/折价':>10}"
+    header = (
+        f"  {'指标':8}"
+        + "".join(f"{n:>{col_w}}" for n in names)
+        + f"{'同业中位':>10}{'溢价/折价':>10}"
+    )
     print(header)
     print("  " + "-" * (len(header) - 2))
 
@@ -719,8 +767,8 @@ def peer_compare(target: dict, peers: list):
 # 12. DCF 敏感性矩阵 (增长率 × 贴现率)
 # ---------------------------------------------------------------------------
 
-def dcf_matrix(fcf, growth_list, discount_list, terminal_growth, years=10,
-               market_cap=None):
+
+def dcf_matrix(fcf, growth_list, discount_list, terminal_growth, years=10, market_cap=None):
     """两段式 DCF 内在价值敏感性矩阵：行=增长率，列=贴现率。
 
     模型与 reverse-dcf 一致（前 N 年按 g 增长逐年折现 + Gordon 终值），
@@ -747,18 +795,20 @@ def dcf_matrix(fcf, growth_list, discount_list, terminal_growth, years=10,
         pv += f * (1 + gt) / (r - gt) / (1 + r) ** years
         return pv
 
-    print(f"  当前 FCF: {fmt_number(exact(fcf))} | 预测期: {years}年 | 永续增长: {gt*100:.1f}%")
+    print(f"  当前 FCF: {fmt_number(exact(fcf))} | 预测期: {years}年 | 永续增长: {gt * 100:.1f}%")
     if market_cap:
         print(f"  当前市值: {fmt_number(exact(market_cap))}（括号内为内在价值相对市值的溢价空间）")
     print()
 
     corner = "增速\\贴现"
     col_w = 20 if market_cap else 15
-    header = f"  {corner:>10}" + "".join(f"{format(r*100, '.1f') + '%':>{col_w}}" for r in discount_list)
+    header = f"  {corner:>10}" + "".join(
+        f"{format(r * 100, '.1f') + '%':>{col_w}}" for r in discount_list
+    )
     print(header)
     print("  " + "-" * (len(header) - 2))
     for g in growth_list:
-        row = f"  {g*100:>9.1f}%"
+        row = f"  {g * 100:>9.1f}%"
         for r in discount_list:
             v = intrinsic(g, r)
             cell = fmt_number(exact(round(v, 2)))
@@ -776,68 +826,32 @@ def dcf_matrix(fcf, growth_list, discount_list, terminal_growth, years=10,
 
 # ---------------------------------------------------------------------------
 # 财务质量三件套：Beneish M-Score / Altman Z-Score / 应计质量（Sloan）
+# 计算逻辑已提取到 core/analysis.py，此处仅保留 CLI 输出格式化
 # ---------------------------------------------------------------------------
-
-_MSCORE_FIELDS = ("revenue", "receivables", "cogs", "current_assets", "ppe",
-                  "total_assets", "depreciation", "sga", "current_liabilities",
-                  "long_term_debt", "net_income", "cfo")
 
 
 def m_score(cur: dict, pri: dict):
     """Beneish M-Score 盈余操纵概率模型（需连续两年同口径数据）。
     返回 True=低风险 / False=高风险（退出码用）。"""
-    missing = [f for f in _MSCORE_FIELDS if not isinstance(cur.get(f), (int, float))
-               or not isinstance(pri.get(f), (int, float))]
-    if missing:
-        print(f"❌ --current/--prior 缺少字段: {', '.join(missing)}")
-        print(f"   全部字段: {', '.join(_MSCORE_FIELDS)}（同一币种同一单位，取自年报）")
-        sys.exit(EXIT_BAD_ARGS)
-
-    def safe_div(a, b):
-        return a / b if b else None
-
-    # 八大指数（任一项分母为零时置 1 = 中性，并标注）
-    neutral = []
-
-    def idx(name, val):
-        if val is None:
-            neutral.append(name)
-            return 1.0
-        return val
-
-    dsri = idx("DSRI", safe_div(safe_div(cur["receivables"], cur["revenue"]),
-                                safe_div(pri["receivables"], pri["revenue"])))
-    gm_cur = safe_div(cur["revenue"] - cur["cogs"], cur["revenue"])
-    gm_pri = safe_div(pri["revenue"] - pri["cogs"], pri["revenue"])
-    gmi = idx("GMI", safe_div(gm_pri, gm_cur))
-    aq_cur = safe_div(cur["total_assets"] - cur["current_assets"] - cur["ppe"], cur["total_assets"])
-    aq_pri = safe_div(pri["total_assets"] - pri["current_assets"] - pri["ppe"], pri["total_assets"])
-    aqi = idx("AQI", safe_div(aq_cur, aq_pri))
-    sgi = idx("SGI", safe_div(cur["revenue"], pri["revenue"]))
-    dep_cur = safe_div(cur["depreciation"], cur["depreciation"] + cur["ppe"])
-    dep_pri = safe_div(pri["depreciation"], pri["depreciation"] + pri["ppe"])
-    depi = idx("DEPI", safe_div(dep_pri, dep_cur))
-    sgai = idx("SGAI", safe_div(safe_div(cur["sga"], cur["revenue"]),
-                                safe_div(pri["sga"], pri["revenue"])))
-    lev_cur = safe_div(cur["current_liabilities"] + cur["long_term_debt"], cur["total_assets"])
-    lev_pri = safe_div(pri["current_liabilities"] + pri["long_term_debt"], pri["total_assets"])
-    lvgi = idx("LVGI", safe_div(lev_cur, lev_pri))
-    tata = safe_div(cur["net_income"] - cur["cfo"], cur["total_assets"]) or 0.0
-
-    m = (-4.84 + 0.920 * dsri + 0.528 * gmi + 0.404 * aqi + 0.892 * sgi
-         + 0.115 * depi - 0.172 * sgai + 4.679 * tata - 0.327 * lvgi)
+    result = _compute_m_score(cur, pri)  # 缺字段时抛 ValidationError → @cli_entry 处理
+    m = result["m_score"]
+    ok = result["ok"]
+    indices = result["indices"]
+    neutral = result["neutral"]
 
     print("=" * 66)
     print("Beneish M-Score 盈余操纵初筛")
     print("=" * 66)
-    rows = [("DSRI 应收周转指数", dsri, "应收增速远超收入→可能提前确认收入"),
-            ("GMI  毛利率指数", gmi, "毛利恶化的公司更有动机粉饰"),
-            ("AQI  资产质量指数", aqi, "软性资产占比上升→费用资本化嫌疑"),
-            ("SGI  收入增长指数", sgi, "高增长公司更有动机维持增长假象"),
-            ("DEPI 折旧率指数", depi, "折旧率下降→可能拉长折旧年限增利"),
-            ("SGAI 费用率指数", sgai, "费用增速超收入→经营效率恶化"),
-            ("LVGI 杠杆指数", lvgi, "杠杆上升→违约压力下的操纵动机"),
-            ("TATA 总应计/总资产", tata, "利润中非现金部分越高越可疑")]
+    rows = [
+        ("DSRI 应收周转指数", indices["DSRI"], "应收增速远超收入→可能提前确认收入"),
+        ("GMI  毛利率指数", indices["GMI"], "毛利恶化的公司更有动机粉饰"),
+        ("AQI  资产质量指数", indices["AQI"], "软性资产占比上升→费用资本化嫌疑"),
+        ("SGI  收入增长指数", indices["SGI"], "高增长公司更有动机维持增长假象"),
+        ("DEPI 折旧率指数", indices["DEPI"], "折旧率下降→可能拉长折旧年限增利"),
+        ("SGAI 费用率指数", indices["SGAI"], "费用增速超收入→经营效率恶化"),
+        ("LVGI 杠杆指数", indices["LVGI"], "杠杆上升→违约压力下的操纵动机"),
+        ("TATA 总应计/总资产", indices["TATA"], "利润中非现金部分越高越可疑"),
+    ]
     for name, v, note in rows:
         print(f"  {name:20s} {v:>7.3f}   {note}")
     if neutral:
@@ -846,73 +860,66 @@ def m_score(cur: dict, pri: dict):
     print(f"  M-Score = {m:.2f}")
     if m > -1.78:
         print("  🔴 高风险（> -1.78）：落入操纵组典型区间，必须逐项排查异常指数对应的报表科目")
-        ok = False
     elif m > -2.22:
         print("  🟡 灰色区（-2.22 ~ -1.78）：未达典型操纵阈值，但应对最高的 2-3 个指数做交叉验证")
-        ok = True
     else:
         print("  🟢 低风险（< -2.22）：未见典型盈余操纵信号")
-        ok = True
     print("  注: M-Score 是概率初筛非定罪工具，金融股不适用；高风险≠造假，低风险≠安全")
     return ok
 
 
-def altman_z(working_capital, retained_earnings, ebit, equity_value,
-             total_liabilities, total_assets, revenue=None, model="public"):
+def altman_z(
+    working_capital,
+    retained_earnings,
+    ebit,
+    equity_value,
+    total_liabilities,
+    total_assets,
+    revenue=None,
+    model="public",
+):
     """Altman Z-Score 财务困境风险。model: public(经典上市制造业) / em(新兴市场 Z''，
     适用非制造业与 A股/港股)。返回 True=安全 / False=困境区。"""
-    if total_assets <= 0 or total_liabilities <= 0:
-        print("❌ 总资产/总负债必须 > 0")
-        sys.exit(EXIT_BAD_ARGS)
-    x1 = working_capital / total_assets
-    x2 = retained_earnings / total_assets
-    x3 = ebit / total_assets
-    x4 = equity_value / total_liabilities
+    result = _compute_altman_z(
+        working_capital, retained_earnings, ebit, equity_value,
+        total_liabilities, total_assets, revenue, model,
+    )
+    z = result["z"]
+    ok = result["ok"]
+    x = result["x"]
+    safe_line = result["safe_line"]
+    distress_line = result["distress_line"]
 
     model_label = "经典上市制造业" if model == "public" else "新兴市场 Z''"
     print("=" * 66)
     print(f"Altman Z-Score 财务困境风险（{model_label}模型）")
     print("=" * 66)
-    print(f"  X1 营运资本/总资产   {x1:>7.3f}")
-    print(f"  X2 留存收益/总资产   {x2:>7.3f}")
-    print(f"  X3 EBIT/总资产       {x3:>7.3f}")
-    print(f"  X4 股权价值/总负债   {x4:>7.3f}")
-
-    if model == "public":
-        if revenue is None:
-            print("❌ 经典模型需要 --revenue（X5 = 收入/总资产）；非制造业请用 --model em")
-            sys.exit(EXIT_BAD_ARGS)
-        x5 = revenue / total_assets
-        print(f"  X5 收入/总资产       {x5:>7.3f}")
-        z = 1.2 * x1 + 1.4 * x2 + 3.3 * x3 + 0.6 * x4 + 1.0 * x5
-        safe_line, distress_line = 2.99, 1.81
-    else:
-        z = 6.56 * x1 + 3.26 * x2 + 6.72 * x3 + 1.05 * x4
-        safe_line, distress_line = 2.60, 1.10
+    print(f"  X1 营运资本/总资产   {x['x1']:>7.3f}")
+    print(f"  X2 留存收益/总资产   {x['x2']:>7.3f}")
+    print(f"  X3 EBIT/总资产       {x['x3']:>7.3f}")
+    print(f"  X4 股权价值/总负债   {x['x4']:>7.3f}")
+    if "x5" in x:
+        print(f"  X5 收入/总资产       {x['x5']:>7.3f}")
 
     print()
     print(f"  Z-Score = {z:.2f}（安全线 {safe_line} / 困境线 {distress_line}）")
     if z >= safe_line:
         print("  🟢 安全区：近期破产/财务困境风险低")
-        ok = True
     elif z >= distress_line:
         print("  🟡 灰色区：风险中性，关注现金流与再融资能力变化")
-        ok = True
     else:
         print("  🔴 困境区：财务压力显著，价值投资视角应直接一票否决或要求极高安全边际")
-        ok = False
     print("  注: 金融股不适用；重资产周期股应用周期低点数据复算一次")
     return ok
 
 
 def accrual_quality(net_income, cfo, total_assets):
     """应计质量（Sloan 应计比率）：利润含金量与应计占比。返回 True=质量尚可。"""
-    if total_assets <= 0:
-        print("❌ 总资产必须 > 0")
-        sys.exit(EXIT_BAD_ARGS)
-    accruals = net_income - cfo
-    sloan = accruals / total_assets
-    ocf_ni = cfo / net_income if net_income else None
+    result = _compute_accruals(net_income, cfo, total_assets)
+    sloan = result["sloan"]
+    ocf_ni = result["ocf_ni"]
+    accruals = result["accruals"]
+    ok = result["ok"]
 
     print("=" * 66)
     print("应计质量检查（Sloan 应计比率）")
@@ -923,48 +930,42 @@ def accrual_quality(net_income, cfo, total_assets):
     if ocf_ni is not None:
         flag = "✅" if ocf_ni >= 0.8 else "⚠️"
         print(f"  {flag} 利润含金量 CFO/NI = {ocf_ni:.2f}（健康线 ≥0.8，长期应≥1）")
-    print(f"  应计比率 (NI-CFO)/总资产 = {sloan*100:+.1f}%")
+    print(f"  应计比率 (NI-CFO)/总资产 = {sloan * 100:+.1f}%")
     print()
     if sloan > 0.10:
         print("  🔴 应计比率 > +10%：利润主要靠应计支撑，Sloan 研究中此组后续收益显著跑输；")
         print("     逐项核查应收/存货/合同资产变动")
-        ok = False
     elif sloan > 0.05:
         print("  🟡 应计比率 +5%~+10%：偏高，结合连续 3 年趋势判断（单年可能是扩张期正常现象）")
-        ok = True
     else:
         print("  🟢 应计比率正常：利润与现金流匹配度良好")
-        ok = True
     print("  注: 高成长公司应计天然偏高，应与同行业同增速公司对比；连续多年 CFO/NI < 0.8 是硬红线")
     return ok
 
 
 def kelly_position(win_prob, win_return, loss_return, cap=0.25):
     """凯利公式仓位参考：f* = p - q/b，b=盈亏比。输出全凯利/半凯利与上限提示。"""
-    if not (0 < win_prob < 1):
-        print("❌ --win-prob 需在 (0,1) 区间")
-        sys.exit(EXIT_BAD_ARGS)
-    if win_return <= 0 or loss_return <= 0:
-        print("❌ --win/--loss 均为正数（loss 传入亏损幅度的绝对值，如 0.3）")
-        sys.exit(EXIT_BAD_ARGS)
-    b = win_return / loss_return
-    q = 1 - win_prob
-    f = win_prob - q / b
+    result = _compute_kelly(win_prob, win_return, loss_return, cap)
+    f = result["f"]
+    b = result["b"]
+    ok = result["ok"]
 
     print("=" * 66)
     print("凯利公式仓位参考")
     print("=" * 66)
-    print(f"  胜率 p = {win_prob*100:.0f}%  盈亏比 b = {win_return:.2f}/{loss_return:.2f} = {b:.2f}")
-    print(f"  全凯利 f* = p - (1-p)/b = {f*100:+.1f}%")
-    if f <= 0:
+    print(
+        f"  胜率 p = {win_prob * 100:.0f}%  盈亏比 b = {win_return:.2f}/{loss_return:.2f} = {b:.2f}"
+    )
+    print(f"  全凯利 f* = p - (1-p)/b = {f * 100:+.1f}%")
+    if not ok:
         print("  🔴 f* ≤ 0：期望为负，这笔交易不应参与（任何仓位都是错的）")
         return False
-    half = f / 2
-    rec = min(half, cap)
-    print(f"  半凯利（实务推荐） = {half*100:.1f}%")
+    half = result["half"]
+    rec = result["recommended"]
+    print(f"  半凯利（实务推荐） = {half * 100:.1f}%")
     if half > cap:
-        print(f"  ⚠️ 半凯利仍超单一持仓上限 {cap*100:.0f}%，按上限执行")
-    print(f"  → 建议仓位区间: {rec*100/2:.0f}% ~ {rec*100:.0f}%")
+        print(f"  ⚠️ 半凯利仍超单一持仓上限 {cap * 100:.0f}%，按上限执行")
+    print(f"  → 建议仓位区间: {rec * 100 / 2:.0f}% ~ {rec * 100:.0f}%")
     print()
     print("  注: 胜率/盈亏比应来自 three-scenario 情景推演而非拍脑袋；凯利公式对输入误差极度敏感，")
     print("     只作上限参考不作精确目标；与 portfolio-review 的集中度建议取交集")
@@ -975,6 +976,8 @@ def kelly_position(win_prob, win_return, loss_return, cap=0.25):
 # 命令行入口
 # ---------------------------------------------------------------------------
 
+
+@_cli_entry
 def main():
     parser = argparse.ArgumentParser(
         description="Financial Rigor Toolkit — 金融数据严谨性验证工具",
@@ -989,7 +992,8 @@ Examples:
   %(prog)s cagr --begin 2261 --end 6603 --years 5
   %(prog)s owner-earnings --net-income 1941 --depreciation 380 --maintenance-capex 250
   %(prog)s reverse-dcf --market-cap 28000 --fcf 1600 --discount-rate 0.10 --terminal-growth 0.025
-        """)
+        """,
+    )
 
     sub = parser.add_subparsers(dest="command")
 
@@ -1014,7 +1018,12 @@ Examples:
     cv.add_argument("--field", required=True, help="数据字段名")
     cv.add_argument("--values", required=True, help="JSON: {来源: 数值}")
     cv.add_argument("--unit", default="")
-    cv.add_argument("--tolerance", type=float, default=1.0, help="容差百分比（默认1%，与 financial-data 规范对齐）")
+    cv.add_argument(
+        "--tolerance",
+        type=float,
+        default=1.0,
+        help="容差百分比（默认1%，与 financial-data 规范对齐）",
+    )
 
     # benford
     bf = sub.add_parser("benford", help="Benford定律检测")
@@ -1029,10 +1038,14 @@ Examples:
     ts.add_argument("--price", type=float, required=True)
     ts.add_argument("--eps", type=float, required=True)
     ts.add_argument("--shares", type=float, required=True, help="总股本(亿)")
-    ts.add_argument("--growth", nargs=3, type=float, required=True,
-                    help="三情景年增速 (乐观 中性 悲观), 如 0.15 0.08 0.0")
-    ts.add_argument("--pe", nargs=3, type=float, required=True,
-                    help="三情景目标PE, 如 25 20 15")
+    ts.add_argument(
+        "--growth",
+        nargs=3,
+        type=float,
+        required=True,
+        help="三情景年增速 (乐观 中性 悲观), 如 0.15 0.08 0.0",
+    )
+    ts.add_argument("--pe", nargs=3, type=float, required=True, help="三情景目标PE, 如 25 20 15")
     ts.add_argument("--years", type=int, default=3)
     ts.add_argument("--currency", default="")
 
@@ -1046,10 +1059,15 @@ Examples:
     oe = sub.add_parser("owner-earnings", help="股东盈余（巴菲特定义）")
     oe.add_argument("--net-income", type=float, required=True, help="净利润")
     oe.add_argument("--depreciation", type=float, required=True, help="折旧摊销")
-    oe.add_argument("--maintenance-capex", type=float, required=True,
-                    help="维持性资本开支（从总capex剔除扩张性部分，口径标注[估计]）")
-    oe.add_argument("--working-capital-change", type=float, default=None,
-                    help="营运资本增加（可选，减项）")
+    oe.add_argument(
+        "--maintenance-capex",
+        type=float,
+        required=True,
+        help="维持性资本开支（从总capex剔除扩张性部分，口径标注[估计]）",
+    )
+    oe.add_argument(
+        "--working-capital-change", type=float, default=None, help="营运资本增加（可选，减项）"
+    )
     oe.add_argument("--shares", type=float, default=None, help="总股本（可选，输出每股值）")
 
     # reverse-dcf
@@ -1069,7 +1087,9 @@ Examples:
     # peer-compare
     pc = sub.add_parser("peer-compare", help="同业估值/质量对标")
     pc.add_argument("--target", required=True, help='JSON对象: {"name":"腾讯","PE":18,"PB":3.4}')
-    pc.add_argument("--peers", required=True, help='JSON数组: [{"name":"阿里","PE":12},...]（建议3-5家）')
+    pc.add_argument(
+        "--peers", required=True, help='JSON数组: [{"name":"阿里","PE":12},...]（建议3-5家）'
+    )
 
     # dcf-matrix
     dm = sub.add_parser("dcf-matrix", help="DCF敏感性矩阵（增长率×贴现率）")
@@ -1078,28 +1098,40 @@ Examples:
     dm.add_argument("--discount", required=True, help="贴现率列表，逗号分隔如 0.08,0.10,0.12")
     dm.add_argument("--terminal-growth", type=float, required=True, help="永续增长率，如 0.025")
     dm.add_argument("--years", type=int, default=10, help="预测期年数（默认10）")
-    dm.add_argument("--market-cap", type=float, default=None,
-                    help="当前市值（可选，传入后额外输出溢价/折价）")
+    dm.add_argument(
+        "--market-cap", type=float, default=None, help="当前市值（可选，传入后额外输出溢价/折价）"
+    )
 
     # m-score
     ms = sub.add_parser("m-score", help="Beneish M-Score 盈余操纵初筛（需两年数据）")
-    ms.add_argument("--current", required=True,
-                    help='本期JSON: {"revenue":..,"receivables":..,"cogs":..,"current_assets":..,'
-                         '"ppe":..,"total_assets":..,"depreciation":..,"sga":..,'
-                         '"current_liabilities":..,"long_term_debt":..,"net_income":..,"cfo":..}')
+    ms.add_argument(
+        "--current",
+        required=True,
+        help='本期JSON: {"revenue":..,"receivables":..,"cogs":..,"current_assets":..,'
+        '"ppe":..,"total_assets":..,"depreciation":..,"sga":..,'
+        '"current_liabilities":..,"long_term_debt":..,"net_income":..,"cfo":..}',
+    )
     ms.add_argument("--prior", required=True, help="上年同口径 JSON（字段同 --current）")
 
     # altman-z
     az = sub.add_parser("altman-z", help="Altman Z-Score 财务困境风险")
-    az.add_argument("--working-capital", type=float, required=True, help="营运资本（流动资产-流动负债）")
-    az.add_argument("--retained-earnings", type=float, required=True, help="留存收益（未分配利润+盈余公积）")
+    az.add_argument(
+        "--working-capital", type=float, required=True, help="营运资本（流动资产-流动负债）"
+    )
+    az.add_argument(
+        "--retained-earnings", type=float, required=True, help="留存收益（未分配利润+盈余公积）"
+    )
     az.add_argument("--ebit", type=float, required=True)
     az.add_argument("--equity-value", type=float, required=True, help="股权价值（上市公司用市值）")
     az.add_argument("--total-liabilities", type=float, required=True)
     az.add_argument("--total-assets", type=float, required=True)
     az.add_argument("--revenue", type=float, default=None, help="营收（经典模型必填）")
-    az.add_argument("--model", choices=["public", "em"], default="em",
-                    help="public=经典上市制造业 / em=新兴市场 Z''（默认，适用非制造业与A股港股）")
+    az.add_argument(
+        "--model",
+        choices=["public", "em"],
+        default="em",
+        help="public=经典上市制造业 / em=新兴市场 Z''（默认，适用非制造业与A股港股）",
+    )
 
     # accruals
     ac = sub.add_parser("accruals", help="应计质量（Sloan 应计比率 + 利润含金量）")
@@ -1121,13 +1153,21 @@ Examples:
         ok = verify_market_cap(args.price, args.shares, args.reported, args.currency)
         sys.exit(EXIT_OK if ok else EXIT_VERIFY_FAIL)
     elif args.command == "verify-valuation":
-        verify_valuation(args.price, args.eps, args.bvps, args.fcf_per_share,
-                        args.dividend, args.revenue_per_share)
+        verify_valuation(
+            args.price,
+            args.eps,
+            args.bvps,
+            args.fcf_per_share,
+            args.dividend,
+            args.revenue_per_share,
+        )
         sys.exit(EXIT_OK)
     elif args.command == "cross-validate":
         values = _load_json_arg(
-            args.values, "--values",
-            '{"公司年报": 7518, "macrotrends": 7500, "stockanalysis": 7520}')
+            args.values,
+            "--values",
+            '{"公司年报": 7518, "macrotrends": 7500, "stockanalysis": 7520}',
+        )
         outcome = cross_validate(args.field, values, args.unit, args.tolerance)
         sys.exit(EXIT_VERIFY_FAIL if outcome["has_major_diff"] else EXIT_OK)
     elif args.command == "benford":
@@ -1145,21 +1185,33 @@ Examples:
         sys.exit(EXIT_OK if result is not None else EXIT_BAD_ARGS)
     elif args.command == "three-scenario":
         three_scenario_valuation(
-            args.price, args.eps, args.shares,
-            args.growth[0], args.growth[1], args.growth[2],
-            args.pe[0], args.pe[1], args.pe[2],
-            args.years, args.currency)
+            args.price,
+            args.eps,
+            args.shares,
+            args.growth[0],
+            args.growth[1],
+            args.growth[2],
+            args.pe[0],
+            args.pe[1],
+            args.pe[2],
+            args.years,
+            args.currency,
+        )
         sys.exit(EXIT_OK)
     elif args.command == "cagr":
         cagr_calc(args.begin, args.end, args.years)
         sys.exit(EXIT_OK)
     elif args.command == "owner-earnings":
-        owner_earnings(args.net_income, args.depreciation, args.maintenance_capex,
-                       args.working_capital_change, args.shares)
+        owner_earnings(
+            args.net_income,
+            args.depreciation,
+            args.maintenance_capex,
+            args.working_capital_change,
+            args.shares,
+        )
         sys.exit(EXIT_OK)
     elif args.command == "reverse-dcf":
-        reverse_dcf(args.market_cap, args.fcf, args.discount_rate,
-                    args.terminal_growth, args.years)
+        reverse_dcf(args.market_cap, args.fcf, args.discount_rate, args.terminal_growth, args.years)
         sys.exit(EXIT_OK)
     elif args.command == "valuation-percentile":
         history = _load_json_arg(args.history, "--history", "[35,42,28,55,38]")
@@ -1183,8 +1235,9 @@ Examples:
         if not growth_list or not discount_list:
             print("❌ --growth/--discount 不能为空")
             sys.exit(EXIT_BAD_ARGS)
-        dcf_matrix(args.fcf, growth_list, discount_list, args.terminal_growth,
-                   args.years, args.market_cap)
+        dcf_matrix(
+            args.fcf, growth_list, discount_list, args.terminal_growth, args.years, args.market_cap
+        )
         sys.exit(EXIT_OK)
     elif args.command == "m-score":
         cur = _load_json_arg(args.current, "--current", '{"revenue":6603,...}')
@@ -1195,9 +1248,16 @@ Examples:
         ok = m_score(cur, pri)
         sys.exit(EXIT_OK if ok else EXIT_VERIFY_FAIL)
     elif args.command == "altman-z":
-        ok = altman_z(args.working_capital, args.retained_earnings, args.ebit,
-                      args.equity_value, args.total_liabilities, args.total_assets,
-                      args.revenue, args.model)
+        ok = altman_z(
+            args.working_capital,
+            args.retained_earnings,
+            args.ebit,
+            args.equity_value,
+            args.total_liabilities,
+            args.total_assets,
+            args.revenue,
+            args.model,
+        )
         sys.exit(EXIT_OK if ok else EXIT_VERIFY_FAIL)
     elif args.command == "accruals":
         ok = accrual_quality(args.net_income, args.cfo, args.total_assets)
