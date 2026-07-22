@@ -30,13 +30,21 @@ import subprocess
 import sys
 from datetime import datetime
 
-from utils import EXIT_BAD_ARGS, EXIT_OK
+from utils import _CURL_PATH, EXIT_BAD_ARGS, cli_entry
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _WL_PATH = os.path.join(_ROOT, "data", "watchlist.json")
 
+# ---------------------------------------------------------------------------
+# 信号阈值常量（避免 magic number）
+# ---------------------------------------------------------------------------
+
+SIGNAL_CHANGE_PCT_THRESHOLD = 5.0  # 单日异动阈值 (%)
+SIGNAL_52W_LOW_PROXIMITY = 0.05  # 距 52 周低点触发距离 (5%)
+
 
 def _load() -> list:
+    """加载观察清单条目列表，文件不存在或损坏时返回空列表。"""
     try:
         with open(_WL_PATH, encoding="utf-8") as f:
             return json.load(f).get("items", [])
@@ -44,7 +52,8 @@ def _load() -> list:
         return []
 
 
-def _save(items: list):
+def _save(items: list) -> None:
+    """持久化观察清单到 data/watchlist.json。"""
     os.makedirs(os.path.dirname(_WL_PATH), exist_ok=True)
     with open(_WL_PATH, "w", encoding="utf-8") as f:
         json.dump(
@@ -55,7 +64,8 @@ def _save(items: list):
         )
 
 
-def cmd_add(args):
+def cmd_add(args: argparse.Namespace) -> None:
+    """添加或更新观察标的（同 code 已存在则更新区间/备注）。"""
     items = _load()
     for it in items:
         if it["code"] == args.code:
@@ -89,7 +99,8 @@ def cmd_add(args):
     print(f"  ✅ 已加入观察清单: {args.name or args.code} ({args.code})，共 {len(items)} 个标的")
 
 
-def cmd_remove(code: str):
+def cmd_remove(code: str) -> None:
+    """从观察清单移除指定标的，不存在时退出码 2。"""
     items = _load()
     remain = [it for it in items if it["code"] != code]
     if len(remain) == len(items):
@@ -99,7 +110,8 @@ def cmd_remove(code: str):
     print(f"  ✅ 已移除 {code}，剩余 {len(remain)} 个标的")
 
 
-def cmd_list():
+def cmd_list() -> None:
+    """打印观察清单全部标的及其买卖区间。"""
     items = _load()
     if not items:
         print("  （观察清单为空——add 添加，或让研究流程结论自动入列）")
@@ -135,7 +147,7 @@ def _notify(text: str) -> bool:
     try:
         r = subprocess.run(
             [
-                "/usr/bin/curl",
+                _CURL_PATH,
                 "-s",
                 "-m",
                 "10",
@@ -157,7 +169,8 @@ def _notify(text: str) -> bool:
     return ok
 
 
-def cmd_scan(no_cache=False, notify=False):
+def cmd_scan(no_cache: bool = False, notify: bool = False) -> None:
+    """批量扫描观察清单，输出触发信号（进入买入区/卖出关注/52周低点/单日异动）。"""
     items = _load()
     if not items:
         print("  （观察清单为空，无可扫描标的）")
@@ -188,13 +201,13 @@ def cmd_scan(no_cache=False, notify=False):
         try:
             low52 = float(d.get("low_52w", 0))
             # 合理性防护：现价应 ≥ 52周低点（字段错位/脏数据时跳过，避免误报）
-            if low52 > 0 and low52 * 0.98 <= price <= low52 * 1.05:
+            if low52 > 0 and low52 * (1 - SIGNAL_52W_LOW_PROXIMITY * 0.4) <= price <= low52 * (1 + SIGNAL_52W_LOW_PROXIMITY):
                 signals.append(f"📉 距52周低点({low52:.2f})不足5%")
         except (ValueError, TypeError):
             pass
         try:
             chg = float(d.get("change_pct", 0))
-            if abs(chg) >= 5:
+            if abs(chg) >= SIGNAL_CHANGE_PCT_THRESHOLD:
                 signals.append(f"⚡ 单日异动 {chg:+.1f}%")
         except (ValueError, TypeError):
             chg = 0
@@ -231,7 +244,7 @@ def cmd_scan(no_cache=False, notify=False):
         print("  ✅ 全部标的无触发信号")
 
 
-def cmd_schedule(every: int):
+def cmd_schedule(every: int) -> None:
     """生成定时扫描配置（只生成文件与说明，不自动安装——安装由用户执行）。"""
     if every < 5:
         print("❌ --every 最小 5 分钟（行情缓存 15 分钟，过密无意义）")
@@ -277,7 +290,9 @@ def cmd_schedule(every: int):
     )
 
 
-def main():
+@cli_entry
+def main() -> None:
+    """CLI 入口：解析子命令并分发执行。"""
     parser = argparse.ArgumentParser(
         description="观察清单监控 — 买卖区间维护与批量信号扫描",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -320,7 +335,6 @@ def main():
         cmd_schedule(args.every)
     else:
         cmd_scan(no_cache=args.no_cache, notify=args.notify)
-    sys.exit(EXIT_OK)
 
 
 if __name__ == "__main__":

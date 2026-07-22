@@ -1,6 +1,6 @@
 [project]
 name = "ai-berkshire"
-version = "1.2.0"
+version = "1.3.0"
 description = "AI Berkshire 价值投资研究技能系统 — Python 工具链依赖声明"
 requires-python = ">=3.9"
 

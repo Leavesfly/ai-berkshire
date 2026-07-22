@@ -31,10 +31,10 @@ import argparse
 import json
 import os
 import sys
-import time
 from decimal import Decimal
 from urllib.parse import urlparse
 
+from core.cache import cached_fetch as _cached_fetch_core
 from core.config import CACHE_TTL_FINANCIALS as _TTL_FINANCIALS
 from core.config import CACHE_TTL_KLINE as _TTL_KLINE
 from core.config import CACHE_TTL_QUOTE as _TTL_QUOTE
@@ -88,6 +88,7 @@ except Exception:  # ImportError 及 tickflow 内部初始化异常
 
 # ---------------------------------------------------------------------------
 # 本地缓存层（data/cache/，行情 TTL 15 分钟 / 财务 TTL 7 天）
+# 核心逻辑已提取到 core/cache.py，此处为适配层保持向后兼容。
 # ---------------------------------------------------------------------------
 
 _CACHE_DIR = os.path.join(
@@ -95,57 +96,9 @@ _CACHE_DIR = os.path.join(
 )
 
 
-def _cache_path(kind: str, code: str) -> str:
-    safe = "".join(ch for ch in code if ch.isalnum() or ch in "._-")
-    return os.path.join(_CACHE_DIR, f"{kind}-{safe}.json")
-
-
-def _cache_read(kind: str, code: str):
-    """读缓存条目，失败/不存在返回 None。"""
-    try:
-        with open(_cache_path(kind, code), encoding="utf-8") as f:
-            entry = json.load(f)
-        if "fetched_at" in entry and "payload" in entry:
-            return entry
-    except (OSError, json.JSONDecodeError):
-        pass
-    return None
-
-
-def _cache_write(kind: str, code: str, payload):
-    """写缓存条目；缓存不可写不影响主流程。"""
-    try:
-        os.makedirs(_CACHE_DIR, exist_ok=True)
-        entry = {
-            "fetched_at": time.time(),
-            "fetched_date": time.strftime("%Y-%m-%d %H:%M"),
-            "payload": payload,
-        }
-        with open(_cache_path(kind, code), "w", encoding="utf-8") as f:
-            json.dump(entry, f, ensure_ascii=False)
-    except OSError:
-        pass
-
-
-def _cached_fetch(kind: str, code: str, ttl: int, fetch_fn, no_cache=False):
-    """三级取数：TTL 内缓存 → 网络（成功回写缓存）→ 过期缓存兜底。
-
-    返回 (payload, note)：note 非空时须在输出中展示缓存来源标注。
-    """
-    entry = None if no_cache else _cache_read(kind, code)
-    if entry and time.time() - entry["fetched_at"] <= ttl:
-        return entry["payload"], f"[缓存数据 抓取于{entry['fetched_date']}]（TTL内复用）"
-    try:
-        payload = fetch_fn()
-        if not no_cache:
-            _cache_write(kind, code, payload)
-        return payload, None
-    except (ConnectionError, json.JSONDecodeError, Exception):
-        if entry:
-            return entry["payload"], (
-                f"[缓存数据 抓取于{entry['fetched_date']}]（网络失败回退，可能过期）"
-            )
-        raise
+def _cached_fetch(kind: str, code: str, ttl: int, fetch_fn, no_cache=False) -> tuple:
+    """三级取数（委托 core.cache.cached_fetch）。返回 (payload, note)。"""
+    return _cached_fetch_core(_CACHE_DIR, kind, code, ttl, fetch_fn, no_cache=no_cache)
 
 
 # ---------------------------------------------------------------------------
@@ -153,7 +106,7 @@ def _cached_fetch(kind: str, code: str, ttl: int, fetch_fn, no_cache=False):
 # ---------------------------------------------------------------------------
 
 
-def _parse_qq_quote(raw: str) -> dict:
+def _parse_qq_quote(raw: str) -> dict | None:
     """解析腾讯行情数据。格式：v_shXXXXXX="字段1~字段2~...";"""
     start = raw.find('"')
     end = raw.rfind('"')
@@ -191,7 +144,7 @@ def _parse_qq_quote(raw: str) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def _fetch_quote_dict(qq_code: str) -> dict:
+def _fetch_quote_dict(qq_code: str) -> dict | None:
     """从腾讯行情拉取并解析单只股票；美股无结果时自动补交易所后缀重试。"""
     candidates = [qq_code]
     if qq_code.startswith("us") and "." not in qq_code:
@@ -204,7 +157,7 @@ def _fetch_quote_dict(qq_code: str) -> dict:
     return {}
 
 
-def _get_quote(code: str, no_cache=False):
+def _get_quote(code: str, no_cache=False) -> tuple[dict, str | None]:
     """带缓存的行情获取，返回 (dict, 缓存标注)。"""
     qq_code = _qq_code(code)
     payload, note = _cached_fetch(
@@ -287,7 +240,37 @@ def cmd_valuation(code: str, no_cache=False):
 # ---------------------------------------------------------------------------
 
 
-def _fetch_financials_a_akshare(code_clean: str) -> list:
+def _parse_cn_val(v) -> float | None:
+    """解析中文财务格式：'747.34亿' / '34.19%' / '1234.56万' / 纯数字 / 无效值。
+
+    Returns:
+        解析后的浮点数（亿→×1e8，万→×1e4，%→原值），无效返回 None。
+    """
+    if v is None or v == "False" or v == "" or (isinstance(v, float) and v != v):
+        return None
+    s = str(v).strip()
+    if s.endswith("亿"):
+        try:
+            return float(s[:-1]) * 1e8
+        except ValueError:
+            return None
+    if s.endswith("万"):
+        try:
+            return float(s[:-1]) * 1e4
+        except ValueError:
+            return None
+    if s.endswith("%"):
+        try:
+            return float(s[:-1])
+        except ValueError:
+            return None
+    try:
+        return float(s)
+    except ValueError:
+        return None
+
+
+def _fetch_financials_a_akshare(code_clean: str) -> list[dict]:
     """通过 akshare 同花顺源获取 A 股年度财务摘要，返回标准化 list[dict]。"""
     df = ak.stock_financial_abstract_ths(symbol=code_clean, indicator="按年度")
     if df is None or df.empty:
@@ -296,52 +279,26 @@ def _fetch_financials_a_akshare(code_clean: str) -> list:
     df = df.tail(5).iloc[::-1]  # 倒序，最新在前
     reports = []
     for _, row in df.iterrows():
-
-        def _parse_val(v):
-            """解析 '747.34亿' / '34.19%' / 'False' 等格式。"""
-            if v is None or v == "False" or v == "" or (isinstance(v, float) and v != v):
-                return None
-            s = str(v).strip()
-            if s.endswith("亿"):
-                try:
-                    return float(s[:-1]) * 1e8
-                except ValueError:
-                    return None
-            if s.endswith("万"):
-                try:
-                    return float(s[:-1]) * 1e4
-                except ValueError:
-                    return None
-            if s.endswith("%"):
-                try:
-                    return float(s[:-1])
-                except ValueError:
-                    return None
-            try:
-                return float(s)
-            except ValueError:
-                return None
-
         reports.append(
             {
                 "REPORT_DATE": str(row.get("报告期", "")),
-                "revenue": _parse_val(row.get("营业总收入")),
-                "revenue_growth": _parse_val(row.get("营业总收入同比增长率")),
-                "net_profit": _parse_val(row.get("净利润")),
-                "profit_growth": _parse_val(row.get("净利润同比增长率")),
-                "eps": _parse_val(row.get("基本每股收益")),
-                "bps": _parse_val(row.get("每股净资产")),
-                "roe": _parse_val(row.get("净资产收益率")),
-                "gross_margin": _parse_val(row.get("销售毛利率")),
-                "net_margin": _parse_val(row.get("销售净利率")),
-                "debt_ratio": _parse_val(row.get("资产负债率")),
-                "ocf_per_share": _parse_val(row.get("每股经营现金流")),
+                "revenue": _parse_cn_val(row.get("营业总收入")),
+                "revenue_growth": _parse_cn_val(row.get("营业总收入同比增长率")),
+                "net_profit": _parse_cn_val(row.get("净利润")),
+                "profit_growth": _parse_cn_val(row.get("净利润同比增长率")),
+                "eps": _parse_cn_val(row.get("基本每股收益")),
+                "bps": _parse_cn_val(row.get("每股净资产")),
+                "roe": _parse_cn_val(row.get("净资产收益率")),
+                "gross_margin": _parse_cn_val(row.get("销售毛利率")),
+                "net_margin": _parse_cn_val(row.get("销售净利率")),
+                "debt_ratio": _parse_cn_val(row.get("资产负债率")),
+                "ocf_per_share": _parse_cn_val(row.get("每股经营现金流")),
             }
         )
     return reports
 
 
-def _fetch_financials_a_eastmoney(code_clean: str) -> list:
+def _fetch_financials_a_eastmoney(code_clean: str) -> list[dict]:
     """降级方案：通过东财 datacenter API 获取 A 股财务数据（curl 直连）。"""
     market = _market(code_clean)
     fin_url = "https://datacenter.eastmoney.com/securities/api/data/get"
@@ -394,7 +351,16 @@ def _fetch_financials_a_eastmoney(code_clean: str) -> list:
 # ---------------------------------------------------------------------------
 
 
-def _fetch_financials_yf(code: str) -> list:
+def _yf_get_cell(inc, col, row_name: str) -> float | None:
+    """从 yfinance DataFrame 中安全取单元格值（NaN → None）。"""
+    if row_name in inc.index:
+        v = inc.loc[row_name, col]
+        if v == v:  # not NaN
+            return float(v)
+    return None
+
+
+def _fetch_financials_yf(code: str) -> list[dict]:
     """通过 yfinance 获取港股/美股年度财务数据，返回标准化 list[dict]。"""
     ticker_sym = _yf_ticker(code)
     t = yf.Ticker(ticker_sym)
@@ -404,18 +370,10 @@ def _fetch_financials_yf(code: str) -> list:
 
     reports = []
     for col in inc.columns[:5]:  # 最近 5 个财年
-
-        def _get(row_name):
-            if row_name in inc.index:
-                v = inc.loc[row_name, col]
-                if v == v:  # not NaN
-                    return float(v)
-            return None
-
-        revenue = _get("Total Revenue")
-        net_profit = _get("Net Income")
-        gross_profit = _get("Gross Profit")
-        operating_income = _get("Operating Income")
+        revenue = _yf_get_cell(inc, col, "Total Revenue")
+        net_profit = _yf_get_cell(inc, col, "Net Income")
+        gross_profit = _yf_get_cell(inc, col, "Gross Profit")
+        operating_income = _yf_get_cell(inc, col, "Operating Income")
 
         # 计算增长率（需要上一期数据）
         rev_growth = None
@@ -436,7 +394,7 @@ def _fetch_financials_yf(code: str) -> list:
                 "revenue_growth": rev_growth,
                 "net_profit": net_profit,
                 "profit_growth": profit_growth,
-                "eps": _get("Diluted EPS") or _get("Basic EPS"),
+                "eps": _yf_get_cell(inc, col, "Diluted EPS") or _yf_get_cell(inc, col, "Basic EPS"),
                 "bps": None,
                 "roe": None,
                 "gross_margin": gross_margin,
@@ -469,7 +427,7 @@ def _fetch_financials_yf(code: str) -> list:
             reports[0]["bps"] = info["bookValue"]
         if info.get("debtToEquity"):
             reports[0]["debt_ratio"] = info["debtToEquity"]
-    except Exception:
+    except Exception:  # yfinance info 接口不稳定，缺失不影响主数据
         pass
 
     return reports
@@ -645,7 +603,7 @@ def cmd_financials(code: str, no_cache=False):
             _fetch,
             no_cache=no_cache,
         )
-    except (ConnectionError, json.JSONDecodeError, Exception) as e:
+    except Exception as e:  # 网络/解析/数据源异常统一处理
         print(f"❌ 财务数据获取失败: {e}")
         if mkt_type != "A":
             print("   降级路径：按 skills/financial-data/SKILL.md 走网页双源验证")
@@ -708,7 +666,7 @@ def cmd_financials(code: str, no_cache=False):
 # ---------------------------------------------------------------------------
 
 
-def _fetch_kline(code: str, days: int = 250) -> list:
+def _fetch_kline(code: str, days: int = 250) -> list[dict]:
     """拉取日K收盘价序列，返回 [{date, close}]（旧→新）。
 
     美股不带交易所后缀时接口可能返回脱节的零星数据，故按行数阈值校验，
@@ -735,7 +693,7 @@ def _fetch_kline(code: str, days: int = 250) -> list:
     return [{"date": r[0], "close": float(r[2])} for r in best]
 
 
-def get_close_series(code: str, days: int = 250, no_cache=False):
+def get_close_series(code: str, days: int = 250, no_cache=False) -> tuple[list[dict], str | None]:
     """带缓存的收盘价序列（供本工具 history 命令与 portfolio_calc 导入复用）。"""
     payload, note = _cached_fetch(
         "kline",

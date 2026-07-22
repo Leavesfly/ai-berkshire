@@ -3,7 +3,7 @@ name: investment-research
 description: 投资研究——巴菲特-芒格-段永平-李录四大师综合分析框架，单 Agent 系统化研究一家公司并给出明确结论。当用户想对某公司做完整投资研究、四大师综合分析、得到买入/观望/回避结论时使用。
 type: executable
 confirm_level: medium
-tools_required: [financial_rigor.py, ashare_data.py, report_audit.py, chart_gen.py]
+tools_required: [financial_rigor.py, ashare_data.py, insider_trading.py, report_audit.py, chart_gen.py]
 depends_on: [financial-data]
 ---
 
@@ -149,7 +149,7 @@ python3 tools/financial_rigor.py verify-valuation \
 
 - CEO/创始人关键决策复盘（表格：时间/决策/结果/评分）
 - 资本配置能力：研发回报率、并购成功率、回购时机
-- 股东利益一致性：管理层持股、薪酬结构、减持记录
+- 股东利益一致性：管理层持股、薪酬结构、减持记录（用 `python3 tools/insider_trading.py recent {代码} --days 365` 取数）
 - 组织能力：团队稳定性、关键人才风险
 - 企业文化特征
 

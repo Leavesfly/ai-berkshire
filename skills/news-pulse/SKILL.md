@@ -3,7 +3,7 @@ name: news-pulse
 description: 公司新闻脉搏——股价异动时快速归因，用 4 个并行 Agent 侦察公司事件/监管政策/行业对手/市场情绪，产出"事件时间线 + 异动主因判断 + 是否触发论文重审"。当用户想知道持仓/关注股为什么大涨大跌、追查股价异动原因、判断某条新闻是噪音还是真信号、或快速了解公司最近发生了什么时使用。
 type: executable
 confirm_level: medium
-tools_required: [ashare_data.py]
+tools_required: [ashare_data.py, insider_trading.py]
 depends_on: []
 ---
 

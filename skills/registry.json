@@ -1,6 +1,6 @@
 {
   "$schema": "技能注册表 — 机器可读的技能清单，供 doctor.py 完整性校验与未来自动化使用",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "skills": [
     {
       "name": "bottleneck-hunter",
@@ -104,6 +104,7 @@
       "tools_required": [
         "financial_rigor.py",
         "ashare_data.py",
+        "insider_trading.py",
         "report_audit.py",
         "chart_gen.py"
       ]
@@ -126,6 +127,7 @@
       "tools_required": [
         "financial_rigor.py",
         "filings_fetch.py",
+        "insider_trading.py",
         "report_audit.py"
       ]
     },
@@ -138,11 +140,24 @@
       ]
     },
     {
+      "name": "morning-brief",
+      "category": "monitoring",
+      "confirm_level": "light",
+      "tools_required": [
+        "watchlist.py",
+        "insider_trading.py",
+        "masters_portfolio.py",
+        "decision_log.py",
+        "ashare_data.py"
+      ]
+    },
+    {
       "name": "news-pulse",
       "category": "monitoring",
       "confirm_level": "medium",
       "tools_required": [
-        "ashare_data.py"
+        "ashare_data.py",
+        "insider_trading.py"
       ]
     },
     {
@@ -176,6 +191,25 @@
       ]
     },
     {
+      "name": "red-team",
+      "category": "deep-research",
+      "confirm_level": "medium",
+      "tools_required": [
+        "financial_rigor.py",
+        "ashare_data.py",
+        "insider_trading.py"
+      ]
+    },
+    {
+      "name": "self-review",
+      "category": "monitoring",
+      "confirm_level": "medium",
+      "tools_required": [
+        "decision_log.py",
+        "ashare_data.py"
+      ]
+    },
+    {
       "name": "thesis-drift",
       "category": "monitoring",
       "confirm_level": "light",
@@ -190,7 +224,8 @@
       "confirm_level": "light",
       "tools_required": [
         "financial_rigor.py",
-        "ashare_data.py"
+        "ashare_data.py",
+        "insider_trading.py"
       ]
     },
     {

@@ -1,7 +1,7 @@
 {
   "name": "ai-berkshire",
-  "version": "1.2.0",
-  "description": "AI Berkshire 投研技能包：将巴菲特、芒格、段永平、李录四位价值投资大师的方法论系统化，通过多 Agent 并行、结构化反偏见机制与金融严谨性工具，实现专业级投资研究。含 1 个统一入口与个股研究、行业筛选、财报精读、组合管理、卖出决策、内容创作等 23 个子流程。",
+  "version": "1.3.0",
+  "description": "AI Berkshire 投研技能包：将巴菲特、芒格、段永平、李录四位价值投资大师的方法论系统化，通过多 Agent 并行、红蓝军对抗、概率校准闭环、逻辑链审计与金融严谨性工具，实现专业级投资研究。含 1 个统一入口与个股研究、行业筛选、财报精读、组合管理、卖出决策、内容创作等 26 个子流程。",
   "author": {
     "name": "AI Berkshire"
   },
@@ -26,6 +26,7 @@
     "tools/filings_fetch.py",
     "tools/filings_parse.py",
     "tools/masters_portfolio.py",
+    "tools/insider_trading.py",
     "tools/decision_log.py",
     "tools/watchlist.py",
     "tools/quality_screen.py",

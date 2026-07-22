@@ -47,3 +47,20 @@ def fmt_num(value, unit="") -> str:
     if abs(v) >= 1e4:
         return f"{v / 1e4:.2f}万{unit}"
     return f"{v:.2f}{unit}"
+
+
+def fmt_change(value) -> str:
+    """格式化涨跌幅（带正负号，如 +2.35% / -1.20%）。
+
+    Args:
+        value: 涨跌幅数值（百分比形式，如 2.35 表示 2.35%）
+
+    Returns:
+        带正负号的百分比字符串，无效输入返回 "-"。
+    """
+    if value is None or value == "-" or value == "":
+        return "-"
+    try:
+        return f"{float(value):+.2f}%"
+    except (ValueError, TypeError):
+        return str(value)

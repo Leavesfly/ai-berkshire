@@ -38,14 +38,17 @@ CATEGORY_MAP = {
     "investment-team": "deep-research",
     "management-deep-dive": "deep-research",
     "private-company-research": "deep-research",
+    "red-team": "deep-research",
     # ③ 买卖决策
     "exit-review": "decision",
     "investment-checklist": "decision",
     # ④ 持有与监控
     "earnings-review": "monitoring",
     "masters-portfolio": "monitoring",
+    "morning-brief": "monitoring",
     "news-pulse": "monitoring",
     "portfolio-review": "monitoring",
+    "self-review": "monitoring",
     "thesis-drift": "monitoring",
     "thesis-tracker": "monitoring",
     "track-record": "monitoring",

@@ -662,6 +662,164 @@ class TestAshareDataUnique:
 
 
 # ---------------------------------------------------------------------------
+# insider_trading.py（离线：Form4 XML 解析 / 聚合 / 净买卖 / 东财增减持解析）
+# ---------------------------------------------------------------------------
+
+_FAKE_FORM4 = """<?xml version="1.0"?>
+<ownershipDocument>
+  <issuer>
+    <issuerCik>0000320193</issuerCik>
+    <issuerName>Apple Inc.</issuerName>
+    <issuerTradingSymbol>AAPL</issuerTradingSymbol>
+  </issuer>
+  <reportingOwner>
+    <reportingOwnerId>
+      <rptOwnerCik>0001214156</rptOwnerCik>
+      <rptOwnerName>COOK TIMOTHY D</rptOwnerName>
+    </reportingOwnerId>
+    <reportingOwnerRelationship>
+      <isDirector>0</isDirector>
+      <isOfficer>1</isOfficer>
+      <officerTitle>Chief Executive Officer</officerTitle>
+    </reportingOwnerRelationship>
+  </reportingOwner>
+  <periodOfReport>2026-07-15</periodOfReport>
+  <nonDerivativeTable>
+    <nonDerivativeTransaction>
+      <securityTitle><value>Common Stock</value></securityTitle>
+      <transactionDate><value>2026-07-15</value></transactionDate>
+      <transactionCoding>
+        <transactionFormType>4</transactionFormType>
+        <transactionCode>S</transactionCode>
+      </transactionCoding>
+      <transactionAmounts>
+        <transactionShares><value>100000</value></transactionShares>
+        <transactionPricePerShare><value>200.50</value></transactionPricePerShare>
+        <transactionAcquiredDisposedCode><value>D</value></transactionAcquiredDisposedCode>
+      </transactionAmounts>
+      <postTransactionAmounts>
+        <sharesOwnedFollowingTransaction><value>3000000</value></sharesOwnedFollowingTransaction>
+      </postTransactionAmounts>
+    </nonDerivativeTransaction>
+    <nonDerivativeTransaction>
+      <securityTitle><value>Common Stock</value></securityTitle>
+      <transactionDate><value>2026-07-15</value></transactionDate>
+      <transactionCoding>
+        <transactionFormType>4</transactionFormType>
+        <transactionCode>F</transactionCode>
+      </transactionCoding>
+      <transactionAmounts>
+        <transactionShares><value>50000</value></transactionShares>
+        <transactionPricePerShare><value>200.50</value></transactionPricePerShare>
+        <transactionAcquiredDisposedCode><value>D</value></transactionAcquiredDisposedCode>
+      </transactionAmounts>
+      <postTransactionAmounts>
+        <sharesOwnedFollowingTransaction><value>2950000</value></sharesOwnedFollowingTransaction>
+      </postTransactionAmounts>
+    </nonDerivativeTransaction>
+  </nonDerivativeTable>
+</ownershipDocument>
+"""
+
+
+class TestInsiderTrading:
+    def test_parse_form4_xml(self):
+        import insider_trading
+
+        parsed = insider_trading._parse_form4_xml(_FAKE_FORM4)
+        assert parsed["issuer"] == "Apple Inc."
+        assert parsed["owner"] == "COOK TIMOTHY D"
+        assert "Chief Executive" in parsed["title"]
+        assert parsed["period"] == "2026-07-15"
+        assert len(parsed["transactions"]) == 2
+        codes = {t["code"] for t in parsed["transactions"]}
+        assert codes == {"S", "F"}
+        sell = next(t for t in parsed["transactions"] if t["code"] == "S")
+        assert sell["shares"] == 100000 and sell["price"] == 200.50
+
+    def test_classify_txn(self):
+        import insider_trading
+
+        assert insider_trading.classify_txn("P") == "买入"
+        assert insider_trading.classify_txn("S") == "卖出"
+        assert insider_trading.classify_txn("ZZ") == "其他"
+
+    def test_net_summary_excludes_non_discretionary(self):
+        import insider_trading
+
+        txns = [
+            {"code": "P", "shares": 1000},
+            {"code": "S", "shares": 400},
+            {"code": "F", "shares": 999999},  # 缴税代扣，不计入
+            {"code": "A", "shares": 888888},  # 授予，不计入
+        ]
+        s = insider_trading.net_summary(txns)
+        assert s["buy_shares"] == 1000 and s["sell_shares"] == 400
+        assert s["net"] == 600 and s["buy_n"] == 1 and s["sell_n"] == 1
+
+    def test_aggregate_form4(self):
+        import insider_trading
+
+        txns = [
+            {"owner": "COOK", "title": "CEO", "code": "S", "shares": 100, "price": 200, "date": "2026-07-15"},
+            {"owner": "COOK", "title": "CEO", "code": "S", "shares": 100, "price": 210, "date": "2026-07-16"},
+            {"owner": "WAGNER", "title": "", "code": "P", "shares": 50, "price": 190, "date": "2026-07-10"},
+        ]
+        agg = insider_trading.aggregate_form4(txns)
+        cook = next(a for a in agg if a["owner"] == "COOK")
+        assert cook["shares"] == 200 and abs(cook["avg_price"] - 205) < 1e-9
+        assert cook["label"] == "卖出" and cook["date"] == "2026-07-15"
+        # 按股数降序：COOK(200) 在 WAGNER(50) 前
+        assert agg[0]["owner"] == "COOK"
+
+    def test_parse_eastmoney_holder(self):
+        import insider_trading
+
+        rows = [
+            {
+                "PERSON_NAME": "张三",
+                "POSITION_NAME": "董事",
+                "CHANGE_DATE": "2026-07-01 00:00:00",
+                "CHANGE_SHARES": -50000,
+                "AVERAGE_PRICE": 1800.5,
+                "CHANGE_RATIO": 0.0012,
+                "CHANGE_REASON": "竞价交易",
+            },
+            {
+                "PERSON_NAME": "李四",
+                "POSITION_NAME": "高管",
+                "CHANGE_DATE": "2026-07-10 00:00:00",
+                "CHANGE_SHARES": 20000,
+                "AVERAGE_PRICE": None,
+                "CHANGE_RATIO": None,
+            },
+            {"PERSON_NAME": "零变动", "CHANGE_DATE": "2026-07-05", "CHANGE_SHARES": 0},
+        ]
+        out = insider_trading.parse_eastmoney_holder(rows)
+        assert len(out) == 2  # 零变动被剔除
+        assert out[0]["holder"] == "李四" and out[0]["direction"] == "增持"  # 按日期降序
+        zhang = next(r for r in out if r["holder"] == "张三")
+        assert zhang["direction"] == "减持" and zhang["shares"] == -50000
+        assert zhang["price"] == 1800.5 and zhang["ratio"] == 0.0012
+        assert zhang["position"] == "董事" and zhang["reason"] == "竞价交易"
+
+    def test_detect_market(self):
+        import insider_trading
+
+        assert insider_trading.detect_market_type("usAAPL") == "US"
+        assert insider_trading.detect_market_type("hk00700") == "HK"
+        assert insider_trading.detect_market_type("600519") == "A"
+
+    def test_no_command_exits_2(self):
+        code, _ = run_tool("insider_trading.py")
+        assert code == 2
+
+    def test_bad_only_exits_2(self):
+        code, _ = run_tool("insider_trading.py", "recent", "usAAPL", "--only", "hold")
+        assert code == 2
+
+
+# ---------------------------------------------------------------------------
 # 全量工具可编译（doctor 的开发时等价物）
 # ---------------------------------------------------------------------------
 
@@ -1101,3 +1259,156 @@ class TestMorningstarFairValue:
         assert mf.extract_ticker("SHORT") == "SHORT"
         # BRK.B 的 TenforeId 格式为 126.1.BRK.B，取最后一段为 B（实际 ticker 需外部映射）
         assert mf.extract_ticker("126.1.BRK.B") == "B"
+
+
+# ---------------------------------------------------------------------------
+# watchlist.py 边界测试（P1 补充：空清单 / 推送 payload / 信号常量）
+# ---------------------------------------------------------------------------
+
+
+class TestWatchlistExtended:
+    def test_list_empty(self, tmp_path, monkeypatch, capsys):
+        """空清单 list 不报错，输出提示文字。"""
+        import watchlist
+
+        monkeypatch.setattr(watchlist, "_WL_PATH", str(tmp_path / "wl.json"))
+        watchlist.cmd_list()
+        out = capsys.readouterr().out
+        assert "观察清单为空" in out
+
+    def test_scan_empty(self, tmp_path, monkeypatch, capsys):
+        """空清单 scan 不报错。"""
+        import watchlist
+
+        monkeypatch.setattr(watchlist, "_WL_PATH", str(tmp_path / "wl.json"))
+        watchlist.cmd_scan()
+        out = capsys.readouterr().out
+        assert "观察清单为空" in out
+
+    def test_notify_payload_dingtalk(self, monkeypatch):
+        """钉钉 webhook 生成正确 payload 格式。"""
+        import watchlist
+
+        captured_cmds = []
+
+        def mock_run(cmd, **kwargs):
+            captured_cmds.append(cmd)
+
+            class R:
+                returncode = 0
+
+            return R()
+
+        monkeypatch.setenv("WATCHLIST_WEBHOOK", "https://oapi.dingtalk.com/robot/send?token=x")
+        monkeypatch.setattr("subprocess.run", mock_run)
+        result = watchlist._notify("测试消息")
+        assert result is True
+        # 验证 payload 格式
+        import json
+
+        payload_str = captured_cmds[0][captured_cmds[0].index("-d") + 1]
+        payload = json.loads(payload_str)
+        assert payload["msgtype"] == "text"
+        assert payload["text"]["content"] == "测试消息"
+
+    def test_notify_payload_feishu(self, monkeypatch):
+        """飞书 webhook 生成正确 payload 格式。"""
+        import watchlist
+
+        captured_cmds = []
+
+        def mock_run(cmd, **kwargs):
+            captured_cmds.append(cmd)
+
+            class R:
+                returncode = 0
+
+            return R()
+
+        monkeypatch.setenv("WATCHLIST_WEBHOOK", "https://open.feishu.cn/hook/x")
+        monkeypatch.setattr("subprocess.run", mock_run)
+        result = watchlist._notify("飞书消息")
+        assert result is True
+        import json
+
+        payload_str = captured_cmds[0][captured_cmds[0].index("-d") + 1]
+        payload = json.loads(payload_str)
+        assert payload["msg_type"] == "text"
+        assert payload["content"]["text"] == "飞书消息"
+
+    def test_signal_constants(self):
+        """信号阈值常量应为合理值。"""
+        import watchlist
+
+        assert watchlist.SIGNAL_CHANGE_PCT_THRESHOLD == 5.0
+        assert watchlist.SIGNAL_52W_LOW_PROXIMITY == 0.05
+
+
+# ---------------------------------------------------------------------------
+# ashare_data.py 纯函数补充测试（_parse_cn_val / fmt_change）
+# ---------------------------------------------------------------------------
+
+
+class TestAshareDataExtended:
+    def test_parse_cn_val_yi(self):
+        """解析 '亿' 单位。"""
+        import ashare_data
+
+        assert ashare_data._parse_cn_val("747.34亿") == 747.34e8
+
+    def test_parse_cn_val_wan(self):
+        """解析 '万' 单位。"""
+        import ashare_data
+
+        assert ashare_data._parse_cn_val("1234.56万") == 1234.56e4
+
+    def test_parse_cn_val_pct(self):
+        """解析百分比。"""
+        import ashare_data
+
+        assert ashare_data._parse_cn_val("34.19%") == 34.19
+
+    def test_parse_cn_val_plain_number(self):
+        """解析纯数字。"""
+        import ashare_data
+
+        assert ashare_data._parse_cn_val("123.45") == 123.45
+        assert ashare_data._parse_cn_val(67.89) == 67.89
+
+    def test_parse_cn_val_invalid(self):
+        """无效值返回 None。"""
+        import ashare_data
+
+        assert ashare_data._parse_cn_val(None) is None
+        assert ashare_data._parse_cn_val("False") is None
+        assert ashare_data._parse_cn_val("") is None
+        assert ashare_data._parse_cn_val(float("nan")) is None
+        assert ashare_data._parse_cn_val("无效文字") is None
+
+
+class TestFmtChange:
+    def test_positive(self):
+        from core.formatting import fmt_change
+
+        assert fmt_change(2.35) == "+2.35%"
+
+    def test_negative(self):
+        from core.formatting import fmt_change
+
+        assert fmt_change(-1.2) == "-1.20%"
+
+    def test_zero(self):
+        from core.formatting import fmt_change
+
+        assert fmt_change(0) == "+0.00%"
+
+    def test_none(self):
+        from core.formatting import fmt_change
+
+        assert fmt_change(None) == "-"
+
+    def test_invalid(self):
+        from core.formatting import fmt_change
+
+        assert fmt_change("bad") == "bad"
+        assert fmt_change("-") == "-"

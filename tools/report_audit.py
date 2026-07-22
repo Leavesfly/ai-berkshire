@@ -451,6 +451,141 @@ def render_verdict(results: list, report_name: str = "") -> dict:
 
 
 # ---------------------------------------------------------------------------
+# 逻辑链审计：Claim-Evidence 图谱检查
+# ---------------------------------------------------------------------------
+
+# 结论性语句识别：含判断/结论/建议/评估等关键词的行
+_CLAIM_RE = re.compile(
+    r"(结论|判断|建议|评估|认为|表明|说明|证明|意味着|风险|机会|"
+    r"护城河|安全边际|买入|观望|回避|卖出|通过|不通过|"
+    r"值得|不值得|核心|关键|主要|最|强|弱|高|低)"
+)
+
+# 证据标注：[E1] [E2] 等
+_EVIDENCE_RE = re.compile(r"\[E(\d+)\]")
+
+
+def extract_logic_chain(md_text: str) -> dict:
+    """从报告中提取结论-证据图谱，检查逻辑链完整性。
+
+    返回：
+      {
+        'claims': [{'line', 'text', 'evidence_ids'}],
+        'evidence_definitions': [{'id', 'line', 'text'}],
+        'naked_claims': [...],       # 无证据支撑的结论
+        'orphan_evidence': [...],    # 未被引用的证据
+        'summary': {...}
+      }
+    """
+    lines = md_text.split("\n")
+    claims = []
+    evidence_defs = []
+    all_evidence_ids = set()
+    cited_evidence_ids = set()
+
+    in_code = False
+    for lineno, line in enumerate(lines, start=1):
+        stripped = line.strip()
+        if stripped.startswith("```"):
+            in_code = not in_code
+            continue
+        if in_code:
+            continue
+
+        # 识别证据定义行：含 [E1] 且是定义性质（如 "[E1] 来源：..." 或表格行）
+        e_matches = _EVIDENCE_RE.findall(stripped)
+        for eid in e_matches:
+            all_evidence_ids.add(int(eid))
+
+        # 识别结论性语句
+        if _CLAIM_RE.search(stripped) and len(stripped) > 10:
+            # 排除纯标题行、表格分隔行、元信息头
+            if stripped.startswith("#") or stripped.startswith("|") or stripped.startswith(">"):
+                # 表格行和引用行也可能是结论，但标题行不是
+                if stripped.startswith("#"):
+                    continue
+            e_cited = [int(x) for x in e_matches]
+            for eid in e_cited:
+                cited_evidence_ids.add(eid)
+            claims.append({
+                "line": lineno,
+                "text": stripped[:100],
+                "evidence_ids": e_cited,
+            })
+
+    # 证据定义：第一次出现 [EX] 的行视为定义
+    seen_eids = set()
+    for lineno, line in enumerate(lines, start=1):
+        for m in _EVIDENCE_RE.finditer(line):
+            eid = int(m.group(1))
+            if eid not in seen_eids:
+                seen_eids.add(eid)
+                evidence_defs.append({
+                    "id": eid,
+                    "line": lineno,
+                    "text": line.strip()[:100],
+                })
+
+    naked = [c for c in claims if not c["evidence_ids"]]
+    orphan = sorted(all_evidence_ids - cited_evidence_ids)
+
+    return {
+        "claims": claims,
+        "evidence_definitions": evidence_defs,
+        "naked_claims": naked,
+        "orphan_evidence": orphan,
+        "summary": {
+            "total_claims": len(claims),
+            "supported_claims": len(claims) - len(naked),
+            "naked_claims": len(naked),
+            "total_evidence": len(all_evidence_ids),
+            "orphan_evidence": len(orphan),
+            "coverage": round((len(claims) - len(naked)) / max(len(claims), 1) * 100, 1),
+        },
+    }
+
+
+def render_logic_chain(result: dict, report_name: str = ""):
+    """输出逻辑链审计结果。"""
+    s = result["summary"]
+    print("=" * 70)
+    print(f"{BOLD}逻辑链审计 — Claim-Evidence 图谱检查{RESET}")
+    if report_name:
+        print(f"报告：{report_name}")
+    print("=" * 70)
+    print()
+    print(f"  结论性语句: {s['total_claims']} 条")
+    print(f"  有证据支撑: {GREEN}{s['supported_claims']}{RESET} 条")
+    print(f"  裸奔结论:   {RED if s['naked_claims'] > 0 else GREEN}{s['naked_claims']}{RESET} 条（无 [EX] 标注）")
+    print(f"  证据定义:   {s['total_evidence']} 条")
+    print(f"  孤立证据:   {YELLOW if s['orphan_evidence'] > 0 else GREEN}{s['orphan_evidence']}{RESET} 条（未被任何结论引用）")
+    print(f"  证据覆盖率: {s['coverage']}%")
+    print()
+
+    if result["naked_claims"]:
+        print(f"{BOLD}{RED}裸奔结论（无证据支撑）：{RESET}")
+        for c in result["naked_claims"][:10]:  # 最多显示 10 条
+            print(f"  ❌ 第 {c['line']} 行: {c['text']}")
+        if len(result["naked_claims"]) > 10:
+            print(f"  ... 及另外 {len(result['naked_claims']) - 10} 条")
+        print()
+
+    if result["orphan_evidence"]:
+        print(f"{YELLOW}孤立证据（定义了但未被引用）：{RESET}")
+        print(f"  ⚠️  证据 ID: {result['orphan_evidence']}")
+        print()
+
+    # 判决
+    if s["naked_claims"] == 0:
+        print(f"{BOLD}{GREEN}【通过】所有结论均有证据支撑。{RESET}")
+    elif s["coverage"] >= 70:
+        print(f"{BOLD}{YELLOW}【警告】{s['naked_claims']} 条结论缺少证据标注，建议补充。{RESET}")
+    else:
+        print(f"{BOLD}{RED}【不通过】证据覆盖率仅 {s['coverage']}%，大量结论裸奔，需补充证据链。{RESET}")
+    print("=" * 70)
+
+
+# ---------------------------------------------------------------------------
 # 命令行入口
 # ---------------------------------------------------------------------------
 
@@ -516,6 +651,11 @@ def main():
     )
     vrd.add_argument("--report", default="", help="报告名称（可选，用于显示）")
     vrd.add_argument("--output-json", action="store_true", help="将判决结果以 JSON 输出到 stdout")
+
+    # logic-chain
+    lc = sub.add_parser("logic-chain", help="逻辑链审计：检查结论是否有证据支撑")
+    lc.add_argument("--report", required=True, help="报告文件路径（Markdown）")
+    lc.add_argument("--output-json", action="store_true", help="将审计结果以 JSON 输出到 stdout")
 
     args = parser.parse_args()
 
@@ -621,6 +761,19 @@ def main():
 
         # 非零退出码表示打回，方便 CI/脚本判断
         sys.exit(0 if outcome["verdict"] == "PASS" else 1)
+
+    elif args.command == "logic-chain":
+        if not os.path.exists(args.report):
+            print(f"❌ 文件不存在: {args.report}", file=sys.stderr)
+            sys.exit(1)
+        with open(args.report, encoding="utf-8") as f:
+            text = f.read()
+        result = extract_logic_chain(text)
+        render_logic_chain(result, report_name=args.report)
+        if args.output_json:
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+        # 覆盖率 < 70% 视为不通过
+        sys.exit(0 if result["summary"]["coverage"] >= 70 else 1)
 
     else:
         parser.print_help()

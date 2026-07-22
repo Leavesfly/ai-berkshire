@@ -3,7 +3,7 @@ name: thesis-tracker
 description: 投资论文追踪——买入后的纪律系统，定期检查投资论文是否仍然成立。当用户想跟踪已持仓标的的投资逻辑、做买入后的纪律性复查、判断是否需要加减仓或退出时使用。
 type: executable
 confirm_level: light
-tools_required: [financial_rigor.py, ashare_data.py]
+tools_required: [financial_rigor.py, ashare_data.py, insider_trading.py]
 depends_on: [financial-data]
 ---
 
@@ -128,7 +128,7 @@ depends_on: [financial-data]
 1. 最新财报数据（如果有新的季报/年报）
 2. 近期重大事件（管理层变动、监管政策、竞争动态）
 3. 当前股价和估值指标
-4. 内部人交易记录（大股东增减持）
+4. 内部人交易记录（大股东增减持）——用 `python3 tools/insider_trading.py recent {代码} --days 90` 取数；多名高管同期非计划性大幅减持触发红线 5
 
 ### B3：逐条检查核心假设
 

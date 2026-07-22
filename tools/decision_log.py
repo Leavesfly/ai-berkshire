@@ -12,11 +12,13 @@
 用法（由 Skills 自动调用）：
     python3 tools/decision_log.py add --company 腾讯 --code hk00700 \\
         --skill investment-research --verdict 买入 --price 480 --currency HKD \\
-        --reason "游戏基本盘稳固，视频号广告加速" --report reports/腾讯/腾讯-research-20260720.md
+        --reason "游戏基本盘稳固，视频号广告加速" --report reports/腾讯/腾讯-research-20260720.md \\
+        --probability 75
     python3 tools/decision_log.py list --company 腾讯
     python3 tools/decision_log.py review                # 全部决策 vs 当前价格复盘
     python3 tools/decision_log.py review --company 腾讯
     python3 tools/decision_log.py review --benchmark    # 额外对比同期指数（沪深300/恒指/标普500）
+    python3 tools/decision_log.py calibrate             # 概率校准统计（Brier 分数 + 分桶校准）
 
 依赖：零外部依赖；review 需网络取现价（走 ashare_data 行情通道）。
 退出码：0=成功 / 1=失败 / 2=参数错误。
@@ -28,7 +30,7 @@ import os
 import sys
 from datetime import datetime
 
-from utils import EXIT_BAD_ARGS, EXIT_OK
+from utils import EXIT_BAD_ARGS, cli_entry
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _LOG_PATH = os.path.join(_ROOT, "data", "decisions.jsonl")
@@ -61,6 +63,8 @@ def cmd_add(args):
     if args.verdict not in _VALID_VERDICTS:
         print(f"❌ --verdict 仅支持: {' / '.join(_VALID_VERDICTS)}")
         sys.exit(EXIT_BAD_ARGS)
+    # getattr 兼容旧调用方（测试/脚本直接构造 Namespace 时可不带 probability）
+    probability = getattr(args, "probability", None)
     record = {
         "date": args.date or datetime.now().strftime("%Y-%m-%d"),
         "company": args.company,
@@ -71,6 +75,7 @@ def cmd_add(args):
         "currency": args.currency or "",
         "reason": args.reason or "",
         "report": args.report or "",
+        "probability": probability,
     }
     os.makedirs(os.path.dirname(_LOG_PATH), exist_ok=True)
     with open(_LOG_PATH, "a", encoding="utf-8") as f:
@@ -78,6 +83,7 @@ def cmd_add(args):
     print(
         f"  ✅ 决策已记录: {record['date']} {args.company} — {args.verdict}"
         + (f" @ {args.price}{record['currency']}" if args.price else "")
+        + (f"（置信度 {probability}%）" if probability else "")
     )
     print(f"     日志: {os.path.relpath(_LOG_PATH, _ROOT)}（共 {len(_load_records())} 条）")
 
@@ -236,11 +242,104 @@ def cmd_review(company=None, benchmark=False):
 
 
 # ---------------------------------------------------------------------------
+# calibrate：概率校准统计
+# ---------------------------------------------------------------------------
+
+
+def cmd_calibrate():
+    """Brier 分数 + 分桶校准：检验系统说 X% 的事情实际发生率是否接近 X%。"""
+    records = _load_records()
+    # 只统计有 probability 且有价格可验证的记录
+    scored = [r for r in records if r.get("probability") and r.get("price") and r.get("code")]
+    if not scored:
+        print("  （暂无带概率标注的决策记录——add 时加 --probability 0-100）")
+        return
+
+    print("=" * 70)
+    print("概率校准统计 (Calibration Report)")
+    print("=" * 70)
+    print()
+
+    # 取现价判断结果
+    price_cache = {}
+    outcomes = []  # (predicted_prob, actual_outcome_0or1)
+    for r in scored:
+        code = r["code"]
+        if code not in price_cache:
+            price_cache[code] = _get_current_price(code)
+        cur = price_cache[code]
+        if cur is None:
+            continue
+        change_pct = (cur / float(r["price"]) - 1) * 100
+        # 判断“实际结果”：买入/持有/通过类 → 涨=1；回避/卖出/减仓类 → 跌=1
+        prob = float(r["probability"]) / 100.0
+        if r["verdict"] in ("买入", "持有", "通过"):
+            actual = 1.0 if change_pct > 0 else 0.0
+        elif r["verdict"] in ("回避", "卖出", "减仓", "不通过"):
+            actual = 1.0 if change_pct < 0 else 0.0
+        else:
+            continue  # 观望类不计入校准
+        outcomes.append((prob, actual, r))
+
+    if not outcomes:
+        print("  （无可校准结果——需要记录带 --price 与 --code 且已可取现价的决策）")
+        return
+
+    # Brier 分数
+    brier = sum((p - a) ** 2 for p, a, _ in outcomes) / len(outcomes)
+    print(f"  样本数: {len(outcomes)} 条（带概率标注且可验证）")
+    print(f"  Brier 分数: {brier:.4f}（0=完美校准，0.25=随机，越小越好）")
+    print()
+
+    # 分桶校准（每 20% 一桶）
+    buckets = {"0-20%": [], "21-40%": [], "41-60%": [], "61-80%": [], "81-100%": []}
+    for p, a, _ in outcomes:
+        if p <= 0.2:
+            buckets["0-20%"].append((p, a))
+        elif p <= 0.4:
+            buckets["21-40%"].append((p, a))
+        elif p <= 0.6:
+            buckets["41-60%"].append((p, a))
+        elif p <= 0.8:
+            buckets["61-80%"].append((p, a))
+        else:
+            buckets["81-100%"].append((p, a))
+
+    print(f"  {'桶':10s} {'样本':>4s} {'平均预测':>8s} {'实际发生':>8s} {'偏差':>8s}  校准")
+    print(f"  {'─' * 10} {'─' * 4} {'─' * 8} {'─' * 8} {'─' * 8} {'─' * 6}")
+    for bucket_name, items in buckets.items():
+        if not items:
+            continue
+        n = len(items)
+        avg_pred = sum(p for p, _ in items) / n
+        avg_actual = sum(a for _, a in items) / n
+        gap = avg_actual - avg_pred
+        if abs(gap) <= 0.1:
+            status = "✅ 校准良好"
+        elif gap > 0:
+            status = "⚠️ 偏保守（实际比预测更乐观）"
+        else:
+            status = "⚠️ 偏乐观（实际比预测更悲观）"
+        print(
+            f"  {bucket_name:10s} {n:>4d} {avg_pred:>7.0%} {avg_actual:>8.0%} {gap:>+7.0%}  {status}"
+        )
+
+    print()
+    print("  解读：")
+    print("  - Brier < 0.15 = 校准优秀；0.15-0.25 = 可接受；> 0.25 = 需改进")
+    print("  - 偏乐观 = 系统过度自信，应下调概率标注")
+    print("  - 偏保守 = 系统过度谨慎，可适度上调")
+    print("  ⚠️ 价值投资以年为单位验证，短期价格背离≠判断错误；样本 < 10 条时无统计意义")
+
+
+# ---------------------------------------------------------------------------
 # CLI 入口
 # ---------------------------------------------------------------------------
 
 
-def main():
+@cli_entry
+def main() -> None:
+    """CLI 入口：解析子命令并分发执行。"""
     parser = argparse.ArgumentParser(
         description="投资决策日志 — 记录结论、复盘判断质量",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -257,6 +356,12 @@ def main():
     p_add.add_argument("--reason", default="", help="一句话核心理由")
     p_add.add_argument("--report", default="", help="关联报告路径")
     p_add.add_argument("--date", default="", help="决策日期（默认今天）")
+    p_add.add_argument(
+        "--probability",
+        type=int,
+        default=None,
+        help="结论置信度 0-100（如“70”=70% 概率结论成立），用于校准统计",
+    )
 
     p_list = sub.add_parser("list", help="查看决策记录")
     p_list.add_argument("--company", default=None)
@@ -270,6 +375,8 @@ def main():
         help="额外对比同期指数（按市场自动选沪深300/恒指/标普500）",
     )
 
+    sub.add_parser("calibrate", help="概率校准统计（Brier 分数 + 分桶校准）")
+
     args = parser.parse_args()
     if not args.command:
         parser.print_help()
@@ -279,9 +386,10 @@ def main():
         cmd_add(args)
     elif args.command == "list":
         cmd_list(args.company, args.limit)
+    elif args.command == "calibrate":
+        cmd_calibrate()
     else:
         cmd_review(args.company, args.benchmark)
-    sys.exit(EXIT_OK)
 
 
 if __name__ == "__main__":

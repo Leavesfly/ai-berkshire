@@ -41,3 +41,11 @@
 
 - 默认输出语言：中文。
 - 风格：直接、犀利、不说废话；用 Markdown 表格呈现关键数据。
+
+## 开发约定
+
+- **Lint**：`ruff check tools/ tests/`（line-length 100，select E/F/W/I/UP）。
+- **测试**：`python3 -m pytest tests/ -q`（全离线，不依赖网络与外部包）。
+- **core/ 层约束**：零外部依赖（仅标准库）、无 print / sys.exit，纯函数返回结构化结果。
+- **退出码语义**：0=成功/验证通过 / 1=失败/验证不通过 / 2=参数错误。
+- **CLI 入口**：统一使用 `@cli_entry` 装饰器（utils.py）映射领域异常到退出码。

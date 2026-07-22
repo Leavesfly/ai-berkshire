@@ -54,6 +54,7 @@ def _load_core_tools():
             "filings_fetch.py",
             "filings_parse.py",
             "masters_portfolio.py",
+            "insider_trading.py",
             "decision_log.py",
             "watchlist.py",
             "quality_screen.py",

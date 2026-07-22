@@ -3,7 +3,7 @@ name: management-deep-dive
 description: 管理层纵深研究——买股票就是买人，深度评估公司管理层的能力圈、诚信度、资本配置能力与历史决策质量。当用户想深入研究某公司管理层、评估 CEO 能力与诚信、判断管理层是否值得托付时使用。
 type: executable
 confirm_level: medium
-tools_required: [financial_rigor.py, filings_fetch.py, report_audit.py]
+tools_required: [financial_rigor.py, filings_fetch.py, insider_trading.py, report_audit.py]
 depends_on: [financial-data]
 ---
 
@@ -94,7 +94,7 @@ python3 tools/filings_parse.py diff {上期文件} {本期文件} --section mda 
 > 详细评估表格（股权结构/薪酬/关联交易）见 [`references/evaluation-criteria.md`](references/evaluation-criteria.md)「四、治理结构评估」节。
 
 评估三个维度：
-- **股权结构**：AB股/VIE/实控人持股/独立董事/大股东增减持
+- **股权结构**：AB股/VIE/实控人持股/独立董事/大股东增减持（内部人买卖事实用 `python3 tools/insider_trading.py recent {代码} --days 365` 取数，解读纪律见 [`references/tool-conventions.md`](../../references/tool-conventions.md)）
 - **薪酬合理性**：激励结构是否与长期股东利益一致
 - **关联交易**：是否公允、是否存在利益输送
 
